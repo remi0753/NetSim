@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetSim — L1〜L4 ネットワークシミュレーター</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header id="toolbar">
+  <div class="brand">Net<span>Sim</span></div>
+
+  <div class="tb-group" id="mode-group">
+    <button id="mode-select" class="tb-btn mode-btn active" data-i18n="tb.mode.select" data-i18n-title="tb.mode.select.t" title="選択・移動 (Esc)">⬚ 選択</button>
+    <button id="mode-cable" class="tb-btn mode-btn" data-i18n="tb.mode.cable" data-i18n-title="tb.mode.cable.t" title="デバイス間を結線 (C)">🔌 結線</button>
+    <button id="mode-delete" class="tb-btn mode-btn" data-i18n="tb.mode.delete" data-i18n-title="tb.mode.delete.t" title="クリックで削除 (D)">✕ 削除</button>
+  </div>
+
+  <div class="tb-group">
+    <button id="btn-run" class="tb-btn" data-i18n-title="tb.run.t" title="シミュレーション実行/一時停止 (Space)">⏸ 停止</button>
+    <label class="speed-label"><span data-i18n="tb.speed">速度</span>
+      <input id="speed" type="range" min="-2" max="6" step="1" value="0">
+      <span id="speed-val">x1</span>
+    </label>
+    <span id="sim-clock" data-i18n-title="tb.clock.t" title="シミュレーション時刻">0.0s</span>
+  </div>
+
+  <div class="tb-group">
+    <input id="search" type="text" data-i18n-ph="tb.search.ph" data-i18n-title="tb.search.t" placeholder="🔍 デバイス検索" title="名前で検索してジャンプ (Enter)">
+    <button id="btn-fit" class="tb-btn" data-i18n="tb.fit" data-i18n-title="tb.fit.t" title="全体が見えるようにズーム">⛶ 全体</button>
+    <button id="btn-layout" class="tb-btn" data-i18n="tb.layout" data-i18n-title="tb.layout.t" title="種類ごとに階層状に自動整列">🧭 整列</button>
+  </div>
+
+  <div class="tb-group">
+    <select id="sample-select" data-i18n-title="tb.sample.t" title="サンプル構成を読み込み">
+      <option value="" data-i18n="tb.sample.ph">サンプル構成…</option>
+    </select>
+    <button id="btn-fabric" class="tb-btn" data-i18n="tb.fabric" data-i18n-title="tb.fabric.t" title="スパイン・リーフ構成を自動生成">🏭 DC生成</button>
+    <button id="btn-save" class="tb-btn" data-i18n="tb.save" data-i18n-title="tb.save.t" title="ブラウザに保存">💾 保存</button>
+    <button id="btn-load" class="tb-btn" data-i18n="tb.load" data-i18n-title="tb.load.t" title="ブラウザから読込">📂 読込</button>
+    <button id="btn-export" class="tb-btn" data-i18n="tb.export" data-i18n-title="tb.export.t" title="JSONファイルとして書き出し">⬇ 書出</button>
+    <button id="btn-import" class="tb-btn" data-i18n="tb.import" data-i18n-title="tb.import.t" title="JSONファイルを読み込み">⬆ 取込</button>
+    <input id="import-file" type="file" accept=".json,application/json" hidden>
+    <button id="btn-clear" class="tb-btn danger" data-i18n="tb.clear" data-i18n-title="tb.clear.t" title="全て削除">🗑 全消去</button>
+  </div>
+
+  <div class="tb-group right">
+    <button id="btn-lang" class="tb-btn" data-i18n-title="tb.lang.t" title="言語 / Language">🌐 EN</button>
+    <button id="btn-help" class="tb-btn" data-i18n="tb.help" data-i18n-title="tb.help.t" title="ヘルプ">？ヘルプ</button>
+  </div>
+</header>
+
+<div id="workspace">
+  <aside id="palette">
+    <div class="palette-title" data-i18n="palette.title">デバイス</div>
+    <!-- filled by js/ui/canvas.js -->
+  </aside>
+
+  <main id="canvas-wrap">
+    <!-- grid is drawn with CSS gradients on #canvas-wrap: SVG url(#pattern)
+         references trigger "Unsafe attempt to load URL" warnings on file:// -->
+    <svg id="canvas" tabindex="0">
+      <g id="viewport">
+        <g id="ggroups"></g>
+        <g id="glinks"></g>
+        <g id="gcable"></g>
+        <g id="gdevices"></g>
+        <g id="gmarquee"></g>
+      </g>
+    </svg>
+    <canvas id="pkt-canvas"></canvas>
+    <div id="port-menu" hidden></div>
+    <div id="canvas-hint"></div>
+  </main>
+
+  <aside id="inspector">
+    <div class="inspector-title" data-i18n="inspector.title">プロパティ</div>
+    <div id="inspector-body"></div>
+  </aside>
+</div>
+
+<section id="bottom">
+  <div id="bottom-tabs">
+    <button class="btab active" data-tab="packets"><span data-i18n="pl.tab">パケットログ</span></button>
+    <!-- console tabs appended here -->
+  </div>
+  <div id="bottom-panels">
+    <div class="bpanel active" id="panel-packets">
+      <div class="pl-toolbar">
+        <input id="pl-filter" type="text" data-i18n-ph="pl.filter.ph" placeholder="フィルタ (例: ARP / 10.0.1 / TCP)">
+        <label><input type="checkbox" id="pl-autoscroll" checked> <span data-i18n="pl.autoscroll">自動スクロール</span></label>
+        <label><input type="checkbox" id="pl-capture" checked> <span data-i18n="pl.capture">キャプチャ</span></label>
+        <button id="pl-clear" class="tb-btn" data-i18n="pl.clear">クリア</button>
+        <span class="pl-legend">
+          <i class="dot arp"></i>ARP <i class="dot icmp"></i>ICMP
+          <i class="dot tcp"></i>TCP <i class="dot udp"></i>UDP
+          <i class="dot ctrl"></i>OSPF/VRRP
+        </span>
+      </div>
+      <div id="pl-rows"></div>
+    </div>
+    <!-- console panels appended here -->
+  </div>
+</section>
+
+<div id="placement-modal" hidden>
+  <div class="modal-box">
+    <h2 id="place-title">インターフェース数</h2>
+    <p class="insp-note" id="place-desc">実機に近い範囲で物理インターフェース数を指定してください。</p>
+    <div class="insp-row">
+      <label data-i18n="place.portCount">インターフェース数</label>
+      <input type="number" id="place-port-count" step="1" value="4" style="max-width:80px">
+    </div>
+    <div class="insp-row"><span class="insp-note" id="place-range"></span></div>
+    <div class="insp-row"><span class="insp-note error" id="place-error"></span></div>
+    <div class="insp-row">
+      <button id="place-create" class="tb-btn" data-i18n="place.create">配置する</button>
+      <button id="place-cancel" class="tb-btn" data-i18n="place.cancel">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<div id="fabric-modal" hidden>
+  <div class="modal-box">
+    <h2 data-i18n="fab.title">スパイン・リーフ ファブリック生成</h2>
+    <p class="insp-note" data-i18n="fab.desc">L3-to-the-leaf 構成を自動生成します。リンクごとに /30 サブネット、
+    OSPF (ECMP) で全経路を自動学習。ホストはラックごとにグループ化されます。</p>
+    <div class="insp-row"><label data-i18n="fab.spines">スパイン数 (1〜4)</label><input type="text" id="fab-spines" value="2" style="max-width:60px"></div>
+    <div class="insp-row"><label data-i18n="fab.leaves">リーフ数 (1〜8)</label><input type="text" id="fab-leaves" value="4" style="max-width:60px"></div>
+    <div class="insp-row"><label data-i18n="fab.hosts">ホスト/リーフ (1〜48)</label><input type="text" id="fab-hosts" value="12" style="max-width:60px"></div>
+    <div class="insp-row"><span class="insp-note" id="fab-total"></span></div>
+    <div class="insp-row">
+      <button id="fab-build" class="tb-btn" data-i18n="fab.build">生成する</button>
+      <button id="fab-cancel" class="tb-btn" data-i18n="fab.cancel">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<div id="help-modal" hidden>
+  <div class="modal-box">
+    <h2 data-i18n="help.title">NetSim — L1〜L4 ネットワークシミュレーター</h2>
+    <div class="help-cols">
+      <div data-i18n-html="help.left">
+        <h3>構築の流れ</h3>
+        <ol>
+          <li>左のパレットからデバイスを選び、キャンバスをクリックして配置</li>
+          <li>ツールバーの「🔌 結線」でデバイス→ポートを2箇所選んでケーブル接続</li>
+          <li>デバイスをクリック → 右パネルでIP/VLANなどを設定<br>(または「コンソール」からCLIで設定)</li>
+          <li>PCのコンソールから <code>ping</code> / <code>traceroute</code> / <code>http get</code> を実行し、パケットの流れを観察</li>
+        </ol>
+        <h3>マウス操作</h3>
+        <ul>
+          <li>ドラッグ: デバイス移動 / 空白部で画面パン</li>
+          <li>ホイール: ズーム</li>
+          <li>ダブルクリック: コンソールを開く</li>
+          <li>Delete: 選択中のデバイス/リンクを削除</li>
+        </ul>
+      </div>
+      <div data-i18n-html="help.right">
+        <h3>PC / サーバのコマンド</h3>
+        <ul class="mono">
+          <li>set ip 10.0.1.11 255.255.255.0 10.0.1.254</li>
+          <li>ping 10.0.2.10 [-c 8]</li>
+          <li>traceroute 10.0.2.10</li>
+          <li>arp -a / ipconfig</li>
+          <li>http get 10.0.2.10 (TCPハンドシェイク観察)</li>
+          <li>udp send 10.0.2.10 5000 hello</li>
+        </ul>
+        <h3>スイッチ/ルータのCLI (Cisco IOS風)</h3>
+        <ul class="mono">
+          <li>enable → configure terminal</li>
+          <li>interface Gi0/1 → switchport access vlan 10</li>
+          <li>interface vlan 10 → ip address … (L3スイッチ)</li>
+          <li>ip route 0.0.0.0 0.0.0.0 10.0.0.1</li>
+          <li>router ospf 1 → network 10.0.0.0 0.255.255.255 area 0</li>
+          <li>vrrp 1 ip 10.0.1.1 / channel-group 1 mode active</li>
+          <li>ip helper-address 10.0.2.9 (DHCPリレー)</li>
+          <li>access-list 100 deny icmp any host 10.0.2.10</li>
+          <li>show ip route / show ip ospf neighbor / “?”でヘルプ</li>
+          <li>省略形OK: <code>sh ip int br</code>, <code>conf t</code></li>
+        </ul>
+        <h3>大規模構成</h3>
+        <ul>
+          <li>「🏭 DC生成」: スパイン・リーフを自動生成 (OSPF+ECMP設定済み)</li>
+          <li>Shift+ドラッグ: 複数選択 → 一括IP設定/CLI一括実行/グループ化</li>
+          <li>グループ(ラック)はダブルクリックで展開/インスペクタで折りたたみ</li>
+          <li>🔍検索でジャンプ / ⛶全体表示 (F) / 🧭自動整列</li>
+        </ul>
+      </div>
+    </div>
+    <button id="help-close" class="tb-btn" data-i18n="help.close">閉じる</button>
+  </div>
+</div>
+
+<script src="js/core/i18n.js"></script>
+<script src="js/core/util.js"></script>
+<script src="js/core/protocols.js"></script>
+<script src="js/core/sim.js"></script>
+<script src="js/core/link.js"></script>
+<script src="js/core/device.js"></script>
+<script src="js/core/acl.js"></script>
+<script src="js/core/stack.js"></script>
+<script src="js/core/nat.js"></script>
+<script src="js/core/ospf.js"></script>
+<script src="js/core/cli.js"></script>
+<script src="js/core/hub.js"></script>
+<script src="js/core/switch.js"></script>
+<script src="js/core/host.js"></script>
+<script src="js/core/router.js"></script>
+<script src="js/core/l3switch.js"></script>
+<script src="js/core/lb.js"></script>
+<script src="js/core/topology.js"></script>
+<script src="js/ui/canvas.js"></script>
+<script src="js/ui/inspector.js"></script>
+<script src="js/ui/terminal.js"></script>
+<script src="js/ui/packetlog.js"></script>
+<script src="js/ui/toolbar.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
