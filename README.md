@@ -24,7 +24,7 @@ python3 -m http.server   # → http://localhost:8000
 | Layer | What's implemented |
 |---|---|
 | **L1 Physical** | Cabling, link up/down, `shutdown` / `no shutdown`, repeater hubs |
-| **L2 Data Link** | Ethernet frames, MAC address learning & aging, flooding, 802.1Q VLANs (access/trunk/native VLAN), **LACP port channels (flow-hash distribution)**, broadcast-storm detection via hop limit |
+| **L2 Data Link** | Ethernet frames, MAC address learning & aging, flooding, 802.1Q VLANs (access/trunk/native VLAN), **STP (root/designated/alternate port selection)**, **LACP port channels (flow-hash distribution)**, broadcast-storm detection via hop limit |
 | **L3 Network** | ARP, IPv4 routing (longest-prefix match + administrative distance), static routes, **OSPF-style dynamic routing (Hello / LSA flooding / SPF)**, **ECMP (flow-hash distribution over equal-cost paths)**, TTL decrement, ICMP, inter-VLAN routing via SVIs, **VRRP (virtual IP / virtual MAC / preempt)**, **DHCP (client / server / `ip helper-address` relay)**, **NAT/PAT (inside/outside interfaces, static NAT, interface overload = PAT, proxy-ARP for static publishing)** |
 | **L4 Transport** | TCP (three-way handshake, FIN/RST), UDP, a simple HTTP server/client, extended ACLs, **L4 load balancer (round-robin + health checks)** |
 
@@ -101,6 +101,8 @@ SW1(config-if)# channel-group 1 mode active   ← LACP (bundle two links into on
 SW1(config-if)# switchport mode trunk
 SW1# show etherchannel summary
 SW1# show mac address-table                   ← the channel appears as Po1
+SW1# show spanning-tree                       ← root / designated / alternate port states
+SW1(config)# spanning-tree vlan 1 priority 24576
 ```
 
 ### PC / Server / LB Commands
@@ -171,7 +173,7 @@ tests/                Node tests and browser tests
 
 - OSPF is area 0 only, with no DR election (SPF treats subnets as pseudo-nodes). The real-device configuration model is preserved
 - LACP is a static bundle that omits the negotiation (LACPDU)
-- STP is not implemented — redundant L2 is meant to be built with LACP and redundant L3 with OSPF/ECMP (loops are caught via the hop limit)
+- STP uses one common tree for all VLANs and converges immediately after a topology change; it omits PVST+/MSTP, BPDU timing, and listening/learning timer states
 - TCP is a simplified implementation with no retransmission or window control
 - NAT is "inside source" direction only (static NAT + interface overload = PAT). Dynamic NAT pools, `outside source`, and per-port static NAT are not implemented
 - IPv6 / BGP are not implemented

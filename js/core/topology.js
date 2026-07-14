@@ -120,6 +120,7 @@
       if (pa.device === pb.device) throw new Error('cannot connect a device to itself');
       const link = new NetSim.Link(this.sim, pa, pb);
       this.links.push(link);
+      this.recomputeStp();
       this.emit('topology');
       return link;
     }
@@ -128,7 +129,127 @@
       link.destroy();
       const i = this.links.indexOf(link);
       if (i >= 0) this.links.splice(i, 1);
+      this.recomputeStp();
       this.emit('topology');
+    }
+
+    /*
+     * Common rapid spanning tree for the L2 bridge graph.  This is an
+     * immediate-convergence model: it uses the normal root-port and
+     * designated-port tie breakers, while omitting 802.1D timer states so a
+     * topology edit never produces a transient broadcast storm.
+     */
+    recomputeStp() {
+      const switches = this.devices.filter(d => d instanceof NetSim.L2Switch);
+      if (!switches.length) return;
+      const compare = (a, b) => {
+        for (let i = 0; i < Math.max(a.length, b.length); i++) {
+          if (a[i] === b[i]) continue;
+          return a[i] < b[i] ? -1 : 1;
+        }
+        return 0;
+      };
+      const isBundle = (a, b) => {
+        const ac = a.device.cfg(a), bc = b.device.cfg(b);
+        return ac && bc && ac.channel != null && bc.channel != null;
+      };
+      // A paired port-channel is one STP segment, rather than two parallel
+      // links.  This preserves the existing LACP forwarding behaviour.
+      const byKey = new Map();
+      for (const link of this.links) {
+        const a = link.a, b = link.b;
+        if (!(a.device instanceof NetSim.L2Switch) || !(b.device instanceof NetSim.L2Switch)) continue;
+        if (!a.isUp() || !b.isUp()) continue;
+        const ak = isBundle(a, b) ? `${a.device.id}:${a.device.logicalKey(a)}` : a.id;
+        const bk = isBundle(a, b) ? `${b.device.id}:${b.device.logicalKey(b)}` : b.id;
+        const key = ak < bk ? `${ak}|${bk}` : `${bk}|${ak}`;
+        if (!byKey.has(key)) byKey.set(key, { a: a.device, b: b.device, members: [] });
+        const edge = byKey.get(key);
+        edge.members.push(edge.a === a.device ? { a, b } : { a: b, b: a });
+      }
+      const edges = [...byKey.values()];
+      const adjacent = new Map(switches.map(sw => [sw, []]));
+      for (const edge of edges) { adjacent.get(edge.a).push(edge); adjacent.get(edge.b).push(edge); }
+
+      for (const sw of switches) {
+        for (const port of sw.ports) {
+          port.stpState = port.isUp() ? 'forwarding' : 'disabled';
+          port.stpRole = port.isUp() ? 'designated' : 'disabled';
+        }
+        sw.stpRootId = sw.stpBridgeId();
+        sw.stpRootCost = 0;
+        sw.stpRootPort = null;
+      }
+
+      const visited = new Set();
+      for (const seed of switches) {
+        if (visited.has(seed)) continue;
+        const component = [], pending = [seed];
+        visited.add(seed);
+        while (pending.length) {
+          const sw = pending.pop(); component.push(sw);
+          for (const edge of adjacent.get(sw)) {
+            const peer = edge.a === sw ? edge.b : edge.a;
+            if (!visited.has(peer)) { visited.add(peer); pending.push(peer); }
+          }
+        }
+        const root = component.reduce((best, sw) => sw.stpBridgeId() < best.stpBridgeId() ? sw : best, component[0]);
+        // Dijkstra with the STP received-vector tie breakers.
+        const route = new Map([[root, { cost: 0, edge: null, tie: [] }]]);
+        const settled = new Set();
+        while (settled.size < component.length) {
+          let current = null;
+          for (const sw of component) {
+            if (settled.has(sw) || !route.has(sw)) continue;
+            const r = route.get(sw);
+            if (!current || compare([r.cost, ...r.tie, sw.stpBridgeId()], [route.get(current).cost, ...route.get(current).tie, current.stpBridgeId()]) < 0) current = sw;
+          }
+          if (!current) break;
+          settled.add(current);
+          for (const edge of adjacent.get(current)) {
+            const next = edge.a === current ? edge.b : edge.a;
+            if (settled.has(next)) continue;
+            const member = edge.members[0];
+            const local = member.a.device === current ? member.a : member.b;
+            const remote = member.a.device === current ? member.b : member.a;
+            const candidate = { cost: route.get(current).cost + 1, edge,
+              tie: [current.stpBridgeId(), current.stpPortId(local), remote.device.stpPortId(remote)] };
+            const old = route.get(next);
+            if (!old || compare([candidate.cost, ...candidate.tie], [old.cost, ...old.tie]) < 0) route.set(next, candidate);
+          }
+        }
+        const memberSet = new Set(component);
+        for (const sw of component) {
+          const r = route.get(sw) || { cost: 0, edge: null };
+          sw.stpRootId = root.stpBridgeId();
+          sw.stpRootCost = r.cost;
+          if (r.edge) {
+            const member = r.edge.members.find(m => m.a.device === sw || m.b.device === sw);
+            sw.stpRootPort = member.a.device === sw ? member.a : member.b;
+          }
+        }
+        for (const edge of edges) {
+          if (!memberSet.has(edge.a) || !memberSet.has(edge.b)) continue;
+          const m0 = edge.members[0];
+          const aVector = [edge.a.stpRootId, edge.a.stpRootCost, edge.a.stpBridgeId(), edge.a.stpPortId(m0.a)];
+          const bVector = [edge.b.stpRootId, edge.b.stpRootCost, edge.b.stpBridgeId(), edge.b.stpPortId(m0.b)];
+          const aDesignated = compare(aVector, bVector) < 0;
+          for (const member of edge.members) {
+            const setRole = (sw, port, designated) => {
+              const rootPort = sw.stpRootPort && sw.logicalKey(sw.stpRootPort) === sw.logicalKey(port);
+              port.stpRole = rootPort ? 'root' : (designated ? 'designated' : 'alternate');
+              port.stpState = rootPort || designated ? 'forwarding' : 'blocking';
+            };
+            setRole(edge.a, member.a, aDesignated);
+            setRole(edge.b, member.b, !aDesignated);
+          }
+        }
+      }
+      for (const sw of switches) {
+        const changed = sw.ports.some(p => p._lastStpState && p._lastStpState !== p.stpState);
+        for (const p of sw.ports) p._lastStpState = p.stpState;
+        if (changed) sw.clearMacTable();
+      }
     }
 
     clear() {

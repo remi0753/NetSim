@@ -58,6 +58,37 @@ section('デバイスポート数');
   ok(l3Min.ports.length === 8, 'L3スイッチの下限は8ポート');
 }
 
+/* ---------- STP ---------- */
+section('STP: 冗長L2リンクのループ防止');
+{
+  const { sim, net } = fresh();
+  const sw1 = net.addDevice('switch', 0, 0, 'SW1');
+  const sw2 = net.addDevice('switch', 0, 0, 'SW2');
+  const sw3 = net.addDevice('switch', 0, 0, 'SW3');
+  const pc1 = net.addDevice('pc', 0, 0), pc2 = net.addDevice('pc', 0, 0);
+  net.connect(sw1, 'Gi0/1', sw2, 'Gi0/1');
+  net.connect(sw2, 'Gi0/2', sw3, 'Gi0/1');
+  net.connect(sw3, 'Gi0/2', sw1, 'Gi0/2');
+  net.connect(pc1, 'eth0', sw1, 'Gi0/3');
+  net.connect(pc2, 'eth0', sw3, 'Gi0/3');
+  pc1.setIp('192.168.10.1', 24, null);
+  pc2.setIp('192.168.10.2', 24, null);
+  let looped = false;
+  sim.on('note', n => { if (n.kind === 'loop') looped = true; });
+  const r = pingSync(sim, pc1, '192.168.10.2');
+  ok(r.result === true, '三角形トポロジでも ping 成功');
+  ok(!looped, 'STPがL2ループを遮断');
+  ok([sw1, sw2, sw3].some(sw => sw.ports.some(p => p.stpState === 'blocking')), '少なくとも1ポートがblocking');
+
+  const out = capture(sw3);
+  sw3.exec('enable');
+  sw3.exec('show spanning-tree');
+  ok(out.some(l => l.includes('alternate') && l.includes('blocking')), 'show spanning-tree に代替ブロックポート');
+
+  for (const c of ['conf t', 'spanning-tree vlan 1 priority 0', 'end']) sw3.exec(c);
+  ok(sw3.stpRootId === sw3.stpBridgeId(), '優先度変更でSW3がルートブリッジ');
+}
+
 /* ---------- L1: hub ---------- */
 section('L1: ハブ経由 ping');
 {
@@ -735,21 +766,21 @@ section('NAT: 設定の保存/復元');
   ok(r.result === true, '復元した構成でもPAT経由で疎通');
 }
 
-/* ---------- loop guard ---------- */
-section('ループガード');
+/* ---------- STP protection ---------- */
+section('STP: 並列リンクのループ防止');
 {
   const { sim, net } = fresh();
   const sw1 = net.addDevice('switch', 0, 0), sw2 = net.addDevice('switch', 0, 0);
   const pc1 = net.addDevice('pc', 0, 0);
   net.connect(sw1, 'Gi0/1', sw2, 'Gi0/1');
-  net.connect(sw1, 'Gi0/2', sw2, 'Gi0/2');   // loop!
+  net.connect(sw1, 'Gi0/2', sw2, 'Gi0/2');   // redundant link
   net.connect(pc1, 'eth0', sw1, 'Gi0/3');
   pc1.setIp('10.0.0.1', 24, null);
   let looped = false;
   sim.on('note', n => { if (n.kind === 'loop') looped = true; });
   pc1.stack.ping('10.0.0.99', { count: 1 }, () => {}, () => {});
   sim.advance(60000);
-  ok(looped, 'ブロードキャストストームをホップ上限で検知・遮断');
+  ok(!looped, 'STPがブロードキャストストームを発生前に遮断');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

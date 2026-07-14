@@ -186,6 +186,7 @@
           <li>ip route 0.0.0.0 0.0.0.0 10.0.0.1</li>
           <li>router ospf 1 → network 10.0.0.0 0.255.255.255 area 0</li>
           <li>vrrp 1 ip 10.0.1.1 / channel-group 1 mode active</li>
+          <li>show spanning-tree / spanning-tree vlan 1 priority 24576</li>
           <li>ip helper-address 10.0.2.9 (DHCPリレー)</li>
           <li>access-list 100 deny icmp any host 10.0.2.10</li>
           <li>show ip route / show ip ospf neighbor / “?”でヘルプ</li>
@@ -215,6 +216,7 @@
           <li>ip route 0.0.0.0 0.0.0.0 10.0.0.1</li>
           <li>router ospf 1 → network 10.0.0.0 0.255.255.255 area 0</li>
           <li>vrrp 1 ip 10.0.1.1 / channel-group 1 mode active</li>
+          <li>show spanning-tree / spanning-tree vlan 1 priority 24576</li>
           <li>ip helper-address 10.0.2.9 (DHCP relay)</li>
           <li>access-list 100 deny icmp any host 10.0.2.10</li>
           <li>show ip route / show ip ospf neighbor / “?” for help</li>
@@ -406,6 +408,7 @@
     'cli.h.swAccessVlan':  { ja: 'アクセスVLANを設定', en: 'Set the access VLAN' },
     'cli.h.swAllowed':     { ja: '許可VLANを設定 (all | 10,20 | add 30)', en: 'Set allowed VLANs (all | 10,20 | add 30)' },
     'cli.h.swNative':      { ja: 'ネイティブVLANを設定', en: 'Set the native VLAN' },
+    'cli.h.stpPriority':   { ja: 'STPブリッジ優先度を設定', en: 'Set STP bridge priority' },
     'cli.h.ipAddress':     { ja: 'IPアドレスを設定', en: 'Set the IP address' },
     'cli.h.noIpAddress':   { ja: 'IPアドレスを削除', en: 'Remove the IP address' },
     'cli.h.ospfCost':      { ja: 'OSPFコストを設定', en: 'Set the OSPF cost' },
@@ -435,6 +438,7 @@
     'cli.h.showVrrp':      { ja: 'VRRP状態一覧', en: 'VRRP status' },
     'cli.h.showEther':     { ja: 'ポートチャネル一覧', en: 'List port channels' },
     'cli.h.showMac':       { ja: 'MACアドレステーブル', en: 'MAC address table' },
+    'cli.h.showStp':       { ja: 'STP状態を表示', en: 'Show spanning-tree status' },
     'cli.h.showVlan':      { ja: 'VLAN一覧', en: 'List VLANs' },
     'cli.h.showIntStatus': { ja: 'ポート状態一覧', en: 'Interface status' },
     'cli.h.showAcls':      { ja: 'ACL一覧', en: 'List ACLs' },

@@ -25,6 +25,7 @@
       if (!this.link) return 'notconnect';
       if (!this.adminUp) return 'disabled';
       if (!this.link.other(this).adminUp) return 'down';
+      if (this.stpState === 'blocking') return 'blocking';
       return 'connected';
     }
   }

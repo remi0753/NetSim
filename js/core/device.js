@@ -36,7 +36,12 @@
     getPrompt() { return this.name + '>'; }
 
     /* notify UI that config changed */
-    changed() { this.emit('changed'); this.net.emit('changed'); }
+    changed() {
+      // A physical/admin state change can alter the active spanning tree.
+      // Keeping this here also covers router/host-side link shutdowns.
+      if (this.net.recomputeStp) this.net.recomputeStp();
+      this.emit('changed'); this.net.emit('changed');
+    }
 
     destroy() {
       for (const p of this.ports) {

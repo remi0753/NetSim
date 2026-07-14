@@ -172,6 +172,15 @@
         this.add('config', 'ip routing', 'cli.h.ipRouting', () => this.out(t('cli.m.ipRoutingAlways')));
       }
       if (caps.l2) {
+        this.add('config', 'spanning-tree vlan <num> priority <num>', 'cli.h.stpPriority', (a) => {
+          if (a[1] > 61440 || a[1] % 4096 !== 0) {
+            this.out('Priority must be a multiple of 4096 (0-61440).');
+            return;
+          }
+          // The simulator intentionally uses one common tree for all VLANs.
+          dev.stpPriority = a[1];
+          dev.changed();
+        });
         this.add('config', 'vlan <num>', 'cli.h.vlanCreate', (a) => {
           if (a[0] < 1 || a[0] > 4094) { this.out(t('cli.m.vlanRange')); return; }
           dev.addVlan(a[0]);
@@ -554,6 +563,7 @@
         this.add(mode, 'show etherchannel summary', 'cli.h.showEther', () => this._showEtherchannel());
       }
       if (caps.l2) {
+        this.add(mode, 'show spanning-tree', 'cli.h.showStp', () => this._showSpanningTree());
         this.add(mode, 'show mac address-table', 'cli.h.showMac', () => this._showMacTable());
         this.add(mode, 'show vlan brief', 'cli.h.showVlan', () => this._showVlanBrief());
         this.add(mode, 'show interfaces status', 'cli.h.showIntStatus', () => this._showIntStatus());
@@ -685,6 +695,18 @@
       }
     }
 
+    _showSpanningTree() {
+      const dev = this.device;
+      const rootMac = dev.stpRootId.slice(6).match(/.{1,2}/g).join(':');
+      this.out('Spanning tree enabled (simulated rapid convergence)');
+      this.out(`Root ID    Priority ${dev.stpRootId.slice(0, 5)}  Address ${rootMac}  Cost ${dev.stpRootCost}`);
+      this.out(`Bridge ID  Priority ${dev.stpPriority}  Address ${dev.baseMac}`);
+      this.out('Interface           Role         State       Cost');
+      for (const p of dev.ports) {
+        this.out(`${p.shortName.padEnd(20)}${(p.stpRole || 'designated').padEnd(13)}${(p.stpState || 'forwarding').padEnd(12)}4`);
+      }
+    }
+
     _showVlanBrief() {
       const dev = this.device;
       this.out('VLAN Name                             Status    Ports');
@@ -747,6 +769,10 @@
       L.push(`hostname ${dev.name}`);
       L.push('!');
       if (caps.l2) {
+        if (dev.stpPriority !== 32768) {
+          L.push(`spanning-tree vlan 1 priority ${dev.stpPriority}`);
+          L.push('!');
+        }
         const ids = [...dev.vlans.keys()].filter(v => v !== 1).sort((a, b) => a - b);
         for (const id of ids) {
           L.push(`vlan ${id}`);

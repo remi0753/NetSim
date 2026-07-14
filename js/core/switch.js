@@ -3,11 +3,16 @@
   const NetSim = root.NetSim;
   const BC = NetSim.BROADCAST_MAC;
   const MAC_AGE = 300000;
+  const STP_PRIORITY_DEFAULT = 32768;
 
   class L2Switch extends NetSim.Device {
     constructor(net, name, portCount) {
       super(net, name);
       this.baseMac = NetSim.genMac();
+      this.stpPriority = STP_PRIORITY_DEFAULT;
+      this.stpRootId = null;
+      this.stpRootCost = 0;
+      this.stpRootPort = null;
       this.vlans = new Map([[1, { name: 'default' }]]);
       this.macTable = new Map();   // "vlan|mac" -> {port, ts}
       this.portCfg = new Map();    // port.id -> {mode, accessVlan, allowed:'all'|number[], nativeVlan}
@@ -20,6 +25,12 @@
     }
     cliCaps() { return { l2: true, l3: false, svi: false, acl: false, lacp: true }; }
     cfg(port) { return this.portCfg.get(port.id); }
+    stpBridgeId() { return `${String(this.stpPriority).padStart(5, '0')}.${this.baseMac.replace(/:/g, '')}`; }
+    stpPortId(port) { return this.ports.indexOf(port) + 1; }
+    // `disabled` is a snapshot state from the last tree calculation.  A
+    // directly configured interface can come up before it emits a topology
+    // change (sample builders do this), and it must not be treated as blocked.
+    isStpForwarding(port) { return port.stpState !== 'blocking'; }
 
     addVlan(id, name) {
       if (!this.vlans.has(id)) this.vlans.set(id, { name: name || `VLAN${String(id).padStart(4, '0')}` });
@@ -49,7 +60,7 @@
 
     /* send frame out of a port in a vlan, applying tagging rules; false if filtered */
     egress(port, vlan, frame) {
-      if (!port.link || !port.isUp()) return false;
+      if (!port.link || !port.isUp() || !this.isStpForwarding(port)) return false;
       const c = this.cfg(port);
       const out = NetSim.clone(frame);
       if (c.mode === 'access') {
@@ -125,6 +136,7 @@
 
     receiveFrame(port, frame) {
       if (!port.isUp()) return;
+      if (!this.isStpForwarding(port)) return;
       const vlan = this.ingressVlan(port, frame);
       if (vlan == null) return;
       this.learn(vlan, frame.src, port);
@@ -165,6 +177,7 @@
 
     serializeConfig() {
       return {
+        stpPriority: this.stpPriority,
         vlans: [...this.vlans].map(([id, v]) => ({ id, name: v.name })),
         ports: this.ports.map(p => {
           const c = this.cfg(p);
@@ -179,6 +192,7 @@
     }
     applyConfig(cfg) {
       if (!cfg) return;
+      if (cfg.stpPriority != null) this.stpPriority = cfg.stpPriority;
       for (const v of cfg.vlans || []) this.addVlan(v.id, v.name);
       for (const pc of cfg.ports || []) {
         const p = this.getPort(pc.name);
@@ -192,6 +206,7 @@
         c.nativeVlan = pc.nativeVlan || 1;
         c.channel = pc.channel != null ? pc.channel : null;
       }
+      if (this.net.recomputeStp) this.net.recomputeStp();
     }
   }
   L2Switch.TYPE = 'switch';
