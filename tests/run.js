@@ -43,6 +43,9 @@ ok(NetSim.ip.broadcastOf('10.0.1.77', 24) === '10.0.1.255', 'broadcastOf');
 ok(NetSim.ip.sameSubnet('10.0.1.1', '10.0.1.200', 24), 'sameSubnet true');
 ok(!NetSim.ip.sameSubnet('10.0.1.1', '10.0.2.1', 24), 'sameSubnet false');
 ok(NetSim.ip.maskToLen('255.0.255.0') === null, 'non-contiguous mask rejected');
+ok(NetSim.decode.protoKey(NetSim.pdu.eth('aa', 'bb', 'ipv4',
+  NetSim.pdu.ipv4('10.0.0.1', '10.0.0.2', 'vxlan', { vni: 10100 }))) === 'vxlan',
+  'VXLANパケットが専用の色分類になる');
 
 /* ---------- device sizing ---------- */
 section('デバイスポート数');
@@ -506,6 +509,70 @@ section('OSPF: ECMP (スパイン・リーフ)');
   ok(ecmp2 && ecmp2.nexthops.length === 1, '障害後はネクストホップ1つに収束');
   const r2 = pingSync(sim, pcA, '10.2.0.10');
   ok(r2.result === true, 'スパイン障害後も残路で疎通');
+}
+
+/* ---------- VXLAN ---------- */
+section('VXLAN: Pod CIDRをunderlayへ広告しない');
+{
+  const { sim, net } = fresh();
+  const underlay = net.addDevice('switch', 0, 0, 'UNDERLAY');
+  const n1 = net.addDevice('l3switch', 0, 0, 'NODE1');
+  const n2 = net.addDevice('l3switch', 0, 0, 'NODE2');
+  const p1 = net.addDevice('pc', 0, 0, 'POD1');
+  const p2 = net.addDevice('pc', 0, 0, 'POD2');
+  const edge = net.addDevice('router', 0, 0, 'EDGE');
+  const external = net.addDevice('pc', 0, 0, 'EXTERNAL');
+  underlay.addVlan(100);
+  underlay.cfg(underlay.getPort('Gi0/1')).accessVlan = 100;
+  underlay.cfg(underlay.getPort('Gi0/2')).accessVlan = 100;
+  net.connect(n1, 'Gi0/1', underlay, 'Gi0/1');
+  net.connect(n2, 'Gi0/1', underlay, 'Gi0/2');
+  net.connect(n1, 'Gi0/3', edge, 'Gi0/0');
+  net.connect(n1, 'Gi0/2', p1, 'eth0');
+  net.connect(n2, 'Gi0/2', p2, 'eth0');
+  net.connect(edge, 'Gi0/1', external, 'eth0');
+  const configureNode = (node, underlayIp, podGw, remoteNet, remoteVtep) => {
+    node.addVlan(100); node.addVlan(10);
+    node.cfg(node.getPort('Gi0/1')).accessVlan = 100;
+    node.cfg(node.getPort('Gi0/2')).accessVlan = 10;
+    node.createSvi(100).setIp(underlayIp, 24);
+    node.createSvi(10).setIp(podGw, 24);
+    node.stack.configureVxlan(42, 'Vlan100', [{ network: remoteNet, len: 24, vtep: remoteVtep }]);
+  };
+  configureNode(n1, '10.0.0.11', '10.244.1.1', '10.244.2.0', '10.0.0.12');
+  configureNode(n2, '10.0.0.12', '10.244.2.1', '10.244.1.0', '10.0.0.11');
+  n1.cfg(n1.getPort('Gi0/3')).accessVlan = 100;
+  edge.getPort('Gi0/0').adminUp = true;
+  edge.getPort('Gi0/1').adminUp = true;
+  edge.stack.getIface('GigabitEthernet0/0').setIp('10.0.0.1', 24);
+  edge.stack.getIface('GigabitEthernet0/1').setIp('198.51.100.1', 24);
+  p1.setIp('10.244.1.11', 24, '10.244.1.1');
+  p2.setIp('10.244.2.11', 24, '10.244.2.1');
+  external.setIp('198.51.100.10', 24, '198.51.100.1');
+  n1.stack.getIface('Vlan10').natRole = 'inside';
+  n1.stack.getIface('Vlan100').natRole = 'outside';
+  n1.acls.set(100, [{ action: 'permit', proto: 'ip', src: { net: '10.244.1.0', wild: '0.0.0.255' }, dst: { any: true } }]);
+  n1.stack.nat.addDynamic(100, 'Vlan100', true);
+  n1.stack.staticRoutes.push({ network: '0.0.0.0', len: 0, nexthop: '10.0.0.1', type: 'S' });
+  sim.advance(30000); // underlay STP convergence before sending test traffic
+  const notes = [];
+  sim.on('note', n => { if (n.kind === 'vxlan') notes.push(n); });
+  const r = pingSync(sim, p1, '10.244.2.11');
+  ok(r.result === true, 'VXLANで別NodeのPodへ ping 成功');
+  ok(notes.some(n => n.msg.includes('VNI 42')) && notes.some(n => n.msg.includes('decapsulated')),
+    'VTEPでカプセル化・終端された');
+  const vxlanOutput = capture(n1);
+  n1.exec('show vxlan');
+  ok(vxlanOutput.some(l => l.includes('VNI 42')) && vxlanOutput.some(l => l.includes('10.244.2.0/24')),
+    'show vxlan にVNIとPodプレフィックスを表示');
+  const externalResult = pingSync(sim, p1, '198.51.100.10');
+  ok(externalResult.result === true && n1.stack.nat.entries.some(e => e.localIp === '10.244.1.11'),
+    'Node SNATにより外部ルータへPod CIDRを広告せず外部通信できる');
+  ok(!n1.stack.dynRoutes.has('ospf') && !n2.stack.dynRoutes.has('ospf'), 'Pod CIDRをOSPFで広告しない');
+  const data = JSON.parse(JSON.stringify(net.serialize()));
+  const sim2 = new NetSim.Simulator(), net2 = new NetSim.Network(sim2);
+  net2.load(data);
+  ok(net2.findByName('NODE1').stack.vxlan.vni === 42, 'VXLAN設定が保存・復元される');
 }
 
 /* ---------- LACP ---------- */

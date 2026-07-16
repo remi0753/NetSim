@@ -18,7 +18,7 @@
   };
   const PROTO_COLOR = {
     arp: '#f5c542', icmp: '#4ade80', tcp: '#60a5fa',
-    udp: '#c084fc', ctrl: '#ec4899', other: '#94a3b8',
+    udp: '#c084fc', vxlan: '#f97316', ctrl: '#ec4899', other: '#94a3b8',
   };
   const DEV_W = 84, DEV_H = 54;
   const GRP_W = 132, GRP_H = 76;
@@ -796,6 +796,9 @@
       }
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, cv.width, cv.height);
+      // The capture control governs both the log and topology animation.
+      // Simulation itself continues; only observation is paused.
+      if (!this.app.packetCaptureEnabled) return;
       const txs = this.sim.transmissions;
       if (!txs.length) return;
       ctx.setTransform(this.view.scale * dpr, 0, 0, this.view.scale * dpr,

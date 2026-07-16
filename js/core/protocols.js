@@ -89,6 +89,9 @@
         case 'vrrp':
           inner = `VRRP Advertisement grp=${l4.gid} prio=${l4.priority} vip=${l4.vip}`;
           break;
+        case 'vxlan':
+          inner = `VXLAN VNI=${l4.vni} inner ${l4.inner && l4.inner.src} → ${l4.inner && l4.inner.dst}`;
+          break;
         default:
           inner = ip.proto;
       }
@@ -106,6 +109,7 @@
       if (proto === 'icmp') return 'icmp';
       if (proto === 'tcp') return 'tcp';
       if (proto === 'udp') return 'udp';
+      if (proto === 'vxlan') return 'vxlan';
       if (proto === 'ospf' || proto === 'vrrp') return 'ctrl';
     }
     return 'other';

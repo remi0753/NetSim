@@ -28,7 +28,7 @@
             "name": "GigabitEthernet0/1",
             "adminUp": true,
             "description": "",
-            "ip": "133.237.0.5",
+            "ip": "203.0.113.5",
             "maskLen": 30,
             "aclIn": null,
             "aclOut": null,
@@ -41,7 +41,7 @@
             "name": "GigabitEthernet0/2",
             "adminUp": true,
             "description": "",
-            "ip": "133.237.0.1",
+            "ip": "203.0.113.1",
             "maskLen": 30,
             "aclIn": null,
             "aclOut": null,
@@ -66,14 +66,14 @@
         ],
         "routes": [
           {
-            "network": "133.237.0.0",
-            "len": 26,
-            "nexthop": "133.237.0.2"
+            "network": "10.0.0.0",
+            "len": 8,
+            "nexthop": "203.0.113.2"
           },
           {
-            "network": "133.237.0.0",
-            "len": 26,
-            "nexthop": "133.237.0.6"
+            "network": "10.0.0.0",
+            "len": 8,
+            "nexthop": "203.0.113.6"
           }
         ],
         "acls": [],
@@ -81,7 +81,7 @@
           "statics": [
             {
               "localIp": "192.168.0.10",
-              "globalIp": "133.237.0.1"
+              "globalIp": "203.0.113.1"
             }
           ],
           "dynamic": []
@@ -274,7 +274,7 @@
             "helperAddr": null,
             "natRole": "inside",
             "vrrp": {
-              "gid": 1,
+              "gid": 30,
               "vip": "192.168.1.30",
               "priority": 120
             }
@@ -283,7 +283,7 @@
             "name": "GigabitEthernet0/2",
             "adminUp": true,
             "description": "",
-            "ip": "133.237.0.2",
+            "ip": "203.0.113.2",
             "maskLen": 30,
             "aclIn": null,
             "aclOut": null,
@@ -304,7 +304,7 @@
             "helperAddr": null,
             "natRole": "inside",
             "vrrp": {
-              "gid": 1,
+              "gid": 14,
               "vip": "192.168.1.14",
               "priority": 120
             }
@@ -320,6 +320,11 @@
             "network": "10.0.0.0",
             "len": 8,
             "nexthop": "192.168.1.19"
+          },
+          {
+            "network": "192.168.0.0",
+            "len": 24,
+            "nexthop": "203.0.113.1"
           }
         ],
         "acls": [],
@@ -377,7 +382,7 @@
             "helperAddr": null,
             "natRole": "inside",
             "vrrp": {
-              "gid": 1,
+              "gid": 30,
               "vip": "192.168.1.30",
               "priority": 100
             }
@@ -386,7 +391,7 @@
             "name": "GigabitEthernet0/2",
             "adminUp": true,
             "description": "",
-            "ip": "133.237.0.6",
+            "ip": "203.0.113.6",
             "maskLen": 30,
             "aclIn": null,
             "aclOut": null,
@@ -407,7 +412,7 @@
             "helperAddr": null,
             "natRole": "inside",
             "vrrp": {
-              "gid": 1,
+              "gid": 14,
               "vip": "192.168.1.14",
               "priority": 100
             }
@@ -425,9 +430,9 @@
             "nexthop": "192.168.1.19"
           },
           {
-            "network": "133.237.0.0",
-            "len": 30,
-            "nexthop": "133.237.0.5"
+            "network": "192.168.0.0",
+            "len": 24,
+            "nexthop": "203.0.113.5"
           }
         ],
         "acls": [],
@@ -573,16 +578,6 @@
             "nexthop": "192.168.1.4"
           },
           {
-            "network": "0.0.0.0",
-            "len": 0,
-            "nexthop": "192.168.1.30"
-          },
-          {
-            "network": "0.0.0.0",
-            "len": 0,
-            "nexthop": "192.168.1.14"
-          },
-          {
             "network": "10.1.0.0",
             "len": 24,
             "nexthop": "192.168.1.13"
@@ -596,13 +591,24 @@
             "network": "10.96.0.0",
             "len": 24,
             "nexthop": "192.168.1.4"
+          },
+          {
+            "network": "0.0.0.0",
+            "len": 0,
+            "nexthop": "192.168.1.14"
           }
         ],
         "acls": [],
         "ospf": {
           "pid": 1,
           "routerId": null,
-          "networks": [],
+          "networks": [
+            {
+              "net": "192.168.1.0",
+              "wild": "0.0.0.15",
+              "area": 0
+            }
+          ],
           "passive": []
         }
       }
@@ -733,16 +739,6 @@
             "nexthop": "192.168.1.21"
           },
           {
-            "network": "0.0.0.0",
-            "len": 0,
-            "nexthop": "192.168.1.30"
-          },
-          {
-            "network": "0.0.0.0",
-            "len": 0,
-            "nexthop": "192.168.1.14"
-          },
-          {
             "network": "10.1.0.0",
             "len": 24,
             "nexthop": "192.168.1.29"
@@ -751,10 +747,31 @@
             "network": "10.2.0.0",
             "len": 24,
             "nexthop": "192.168.1.29"
+          },
+          {
+            "network": "10.96.0.0",
+            "len": 24,
+            "nexthop": "192.168.1.20"
+          },
+          {
+            "network": "0.0.0.0",
+            "len": 0,
+            "nexthop": "192.168.1.30"
           }
         ],
         "acls": [],
-        "ospf": null
+        "ospf": {
+          "pid": 1,
+          "routerId": null,
+          "networks": [
+            {
+              "net": "192.168.1.16",
+              "wild": "0.0.0.15",
+              "area": 0
+            }
+          ],
+          "passive": []
+        }
       }
     },
     {
@@ -765,7 +782,7 @@
       "y": -43,
       "portCount": 8,
       "config": {
-        "stpPriority": 32768,
+        "stpPriority": 4096,
         "stpMode": "rapid-pvst",
         "vlans": [
           {
@@ -945,12 +962,56 @@
           "routerId": null,
           "networks": [
             {
+              "net": "192.168.1.0",
+              "wild": "0.0.0.31",
+              "area": 0
+            },
+            {
               "net": "10.0.10.0",
               "wild": "0.0.0.255",
               "area": 0
             }
           ],
-          "passive": []
+          "passive": [
+            "Vlan100",
+            "Vlan150"
+          ]
+        },
+        "vxlan": {
+          "vni": 10100,
+          "sourceInterface": "Vlan151",
+          "peers": [
+            {
+              "network": "10.224.1.0",
+              "len": 24,
+              "vtep": "10.0.10.11"
+            },
+            {
+              "network": "10.224.2.0",
+              "len": 24,
+              "vtep": "10.0.10.12"
+            },
+            {
+              "network": "10.224.3.0",
+              "len": 24,
+              "vtep": "10.0.10.13"
+            },
+            {
+              "network": "10.224.4.0",
+              "len": 24,
+              "vtep": "10.0.10.14"
+            },
+            {
+              "network": "10.224.5.0",
+              "len": 24,
+              "vtep": "10.0.10.15"
+            },
+            {
+              "network": "10.224.6.0",
+              "len": 24,
+              "vtep": "10.0.10.16"
+            }
+          ]
         }
       }
     },
@@ -962,7 +1023,7 @@
       "y": 225,
       "portCount": 8,
       "config": {
-        "stpPriority": 32768,
+        "stpPriority": 8192,
         "stpMode": "rapid-pvst",
         "vlans": [
           {
@@ -1123,7 +1184,61 @@
           }
         ],
         "acls": [],
-        "ospf": null
+        "ospf": {
+          "pid": 1,
+          "routerId": null,
+          "networks": [
+            {
+              "net": "192.168.1.0",
+              "wild": "0.0.0.31",
+              "area": 0
+            },
+            {
+              "net": "10.0.10.0",
+              "wild": "0.0.0.255",
+              "area": 0
+            }
+          ],
+          "passive": [
+            "Vlan101"
+          ]
+        },
+        "vxlan": {
+          "vni": 10100,
+          "sourceInterface": "Vlan151",
+          "peers": [
+            {
+              "network": "10.224.1.0",
+              "len": 24,
+              "vtep": "10.0.10.11"
+            },
+            {
+              "network": "10.224.2.0",
+              "len": 24,
+              "vtep": "10.0.10.12"
+            },
+            {
+              "network": "10.224.3.0",
+              "len": 24,
+              "vtep": "10.0.10.13"
+            },
+            {
+              "network": "10.224.4.0",
+              "len": 24,
+              "vtep": "10.0.10.14"
+            },
+            {
+              "network": "10.224.5.0",
+              "len": 24,
+              "vtep": "10.0.10.15"
+            },
+            {
+              "network": "10.224.6.0",
+              "len": 24,
+              "vtep": "10.0.10.16"
+            }
+          ]
+        }
       }
     },
     {
@@ -1748,6 +1863,10 @@
           {
             "id": 1,
             "name": "default"
+          },
+          {
+            "id": 150,
+            "name": "service"
           }
         ],
         "ports": [
@@ -1756,7 +1875,7 @@
             "adminUp": true,
             "description": "",
             "mode": "access",
-            "accessVlan": 1,
+            "accessVlan": 150,
             "allowed": "all",
             "nativeVlan": 1,
             "channel": null
@@ -1766,7 +1885,7 @@
             "adminUp": true,
             "description": "",
             "mode": "access",
-            "accessVlan": 1,
+            "accessVlan": 150,
             "allowed": "all",
             "nativeVlan": 1,
             "channel": null
@@ -1776,7 +1895,7 @@
             "adminUp": true,
             "description": "",
             "mode": "access",
-            "accessVlan": 1,
+            "accessVlan": 150,
             "allowed": "all",
             "nativeVlan": 1,
             "channel": null
@@ -2026,7 +2145,7 @@
             "adminUp": true,
             "description": "",
             "mode": "access",
-            "accessVlan": 1,
+            "accessVlan": 150,
             "allowed": "all",
             "nativeVlan": 1,
             "channel": null
@@ -2885,7 +3004,8 @@
             "aclOut": null,
             "ospfCost": 1,
             "helperAddr": null,
-            "vrrp": null
+            "vrrp": null,
+            "natRole": "inside"
           },
           {
             "vlanId": 151,
@@ -2895,7 +3015,8 @@
             "aclOut": null,
             "ospfCost": 1,
             "helperAddr": null,
-            "vrrp": null
+            "vrrp": null,
+            "natRole": "outside"
           }
         ],
         "routes": [
@@ -2905,7 +3026,38 @@
             "nexthop": "10.0.10.1"
           }
         ],
-        "acls": [],
+        "acls": [
+          {
+            "num": 100,
+            "rules": [
+              {
+                "action": "deny",
+                "proto": "ip",
+                "src": {
+                  "net": "10.224.1.0",
+                  "wild": "0.0.0.255"
+                },
+                "dst": {
+                  "net": "10.0.0.0",
+                  "wild": "0.255.255.255"
+                },
+                "dstPort": null
+              },
+              {
+                "action": "permit",
+                "proto": "ip",
+                "src": {
+                  "net": "10.224.1.0",
+                  "wild": "0.0.0.255"
+                },
+                "dst": {
+                  "any": true
+                },
+                "dstPort": null
+              }
+            ]
+          }
+        ],
         "ospf": {
           "pid": 1,
           "routerId": null,
@@ -2914,20 +3066,61 @@
               "net": "10.0.10.0",
               "wild": "0.0.0.255",
               "area": 0
-            },
-            {
-              "net": "10.244.1.0",
-              "wild": "0.0.0.255",
-              "area": 0
-            },
-            {
-              "net": "10.224.1.0",
-              "wild": "0.0.0.255",
-              "area": 0
             }
           ],
           "passive": [
-            "vlan2"
+            "Vlan2"
+          ]
+        },
+        "nat": {
+          "statics": [],
+          "dynamic": [
+            {
+              "aclNum": 100,
+              "ifname": "Vlan151",
+              "overload": true
+            }
+          ]
+        },
+        "vxlan": {
+          "vni": 10100,
+          "sourceInterface": "Vlan151",
+          "peers": [
+            {
+              "network": "10.224.2.0",
+              "len": 24,
+              "vtep": "10.0.10.12"
+            },
+            {
+              "network": "10.224.3.0",
+              "len": 24,
+              "vtep": "10.0.10.13"
+            },
+            {
+              "network": "10.224.4.0",
+              "len": 24,
+              "vtep": "10.0.10.14"
+            },
+            {
+              "network": "10.224.5.0",
+              "len": 24,
+              "vtep": "10.0.10.15"
+            },
+            {
+              "network": "10.224.6.0",
+              "len": 24,
+              "vtep": "10.0.10.16"
+            },
+            {
+              "network": "10.224.1.0",
+              "len": 24,
+              "vtep": "10.0.10.2"
+            },
+            {
+              "network": "10.224.1.0",
+              "len": 24,
+              "vtep": "10.0.10.3"
+            }
           ]
         }
       }
@@ -3367,7 +3560,8 @@
             "aclOut": null,
             "ospfCost": 1,
             "helperAddr": null,
-            "vrrp": null
+            "vrrp": null,
+            "natRole": "inside"
           },
           {
             "vlanId": 151,
@@ -3377,7 +3571,8 @@
             "aclOut": null,
             "ospfCost": 1,
             "helperAddr": null,
-            "vrrp": null
+            "vrrp": null,
+            "natRole": "outside"
           }
         ],
         "routes": [
@@ -3387,7 +3582,38 @@
             "nexthop": "10.0.10.1"
           }
         ],
-        "acls": [],
+        "acls": [
+          {
+            "num": 100,
+            "rules": [
+              {
+                "action": "deny",
+                "proto": "ip",
+                "src": {
+                  "net": "10.224.2.0",
+                  "wild": "0.0.0.255"
+                },
+                "dst": {
+                  "net": "10.0.0.0",
+                  "wild": "0.255.255.255"
+                },
+                "dstPort": null
+              },
+              {
+                "action": "permit",
+                "proto": "ip",
+                "src": {
+                  "net": "10.224.2.0",
+                  "wild": "0.0.0.255"
+                },
+                "dst": {
+                  "any": true
+                },
+                "dstPort": null
+              }
+            ]
+          }
+        ],
         "ospf": {
           "pid": 1,
           "routerId": null,
@@ -3396,15 +3622,61 @@
               "net": "10.0.10.0",
               "wild": "0.0.0.255",
               "area": 0
-            },
-            {
-              "net": "10.224.2.0",
-              "wild": "0.0.0.255",
-              "area": 0
             }
           ],
           "passive": [
-            "vlan2"
+            "Vlan2"
+          ]
+        },
+        "nat": {
+          "statics": [],
+          "dynamic": [
+            {
+              "aclNum": 100,
+              "ifname": "Vlan151",
+              "overload": true
+            }
+          ]
+        },
+        "vxlan": {
+          "vni": 10100,
+          "sourceInterface": "Vlan151",
+          "peers": [
+            {
+              "network": "10.224.1.0",
+              "len": 24,
+              "vtep": "10.0.10.11"
+            },
+            {
+              "network": "10.224.3.0",
+              "len": 24,
+              "vtep": "10.0.10.13"
+            },
+            {
+              "network": "10.224.4.0",
+              "len": 24,
+              "vtep": "10.0.10.14"
+            },
+            {
+              "network": "10.224.5.0",
+              "len": 24,
+              "vtep": "10.0.10.15"
+            },
+            {
+              "network": "10.224.6.0",
+              "len": 24,
+              "vtep": "10.0.10.16"
+            },
+            {
+              "network": "10.224.2.0",
+              "len": 24,
+              "vtep": "10.0.10.2"
+            },
+            {
+              "network": "10.224.2.0",
+              "len": 24,
+              "vtep": "10.0.10.3"
+            }
           ]
         }
       }
@@ -3844,7 +4116,8 @@
             "aclOut": null,
             "ospfCost": 1,
             "helperAddr": null,
-            "vrrp": null
+            "vrrp": null,
+            "natRole": "inside"
           },
           {
             "vlanId": 151,
@@ -3854,7 +4127,8 @@
             "aclOut": null,
             "ospfCost": 1,
             "helperAddr": null,
-            "vrrp": null
+            "vrrp": null,
+            "natRole": "outside"
           }
         ],
         "routes": [
@@ -3864,7 +4138,38 @@
             "nexthop": "10.0.10.1"
           }
         ],
-        "acls": [],
+        "acls": [
+          {
+            "num": 100,
+            "rules": [
+              {
+                "action": "deny",
+                "proto": "ip",
+                "src": {
+                  "net": "10.224.3.0",
+                  "wild": "0.0.0.255"
+                },
+                "dst": {
+                  "net": "10.0.0.0",
+                  "wild": "0.255.255.255"
+                },
+                "dstPort": null
+              },
+              {
+                "action": "permit",
+                "proto": "ip",
+                "src": {
+                  "net": "10.224.3.0",
+                  "wild": "0.0.0.255"
+                },
+                "dst": {
+                  "any": true
+                },
+                "dstPort": null
+              }
+            ]
+          }
+        ],
         "ospf": {
           "pid": 1,
           "routerId": null,
@@ -3873,14 +4178,62 @@
               "net": "10.0.10.0",
               "wild": "0.0.0.255",
               "area": 0
-            },
-            {
-              "net": "10.224.3.0",
-              "wild": "0.0.0.255",
-              "area": 0
             }
           ],
-          "passive": []
+          "passive": [
+            "Vlan2"
+          ]
+        },
+        "nat": {
+          "statics": [],
+          "dynamic": [
+            {
+              "aclNum": 100,
+              "ifname": "Vlan151",
+              "overload": true
+            }
+          ]
+        },
+        "vxlan": {
+          "vni": 10100,
+          "sourceInterface": "Vlan151",
+          "peers": [
+            {
+              "network": "10.224.1.0",
+              "len": 24,
+              "vtep": "10.0.10.11"
+            },
+            {
+              "network": "10.224.2.0",
+              "len": 24,
+              "vtep": "10.0.10.12"
+            },
+            {
+              "network": "10.224.4.0",
+              "len": 24,
+              "vtep": "10.0.10.14"
+            },
+            {
+              "network": "10.224.5.0",
+              "len": 24,
+              "vtep": "10.0.10.15"
+            },
+            {
+              "network": "10.224.6.0",
+              "len": 24,
+              "vtep": "10.0.10.16"
+            },
+            {
+              "network": "10.224.3.0",
+              "len": 24,
+              "vtep": "10.0.10.2"
+            },
+            {
+              "network": "10.224.3.0",
+              "len": 24,
+              "vtep": "10.0.10.3"
+            }
+          ]
         }
       }
     },
@@ -4319,7 +4672,8 @@
             "aclOut": null,
             "ospfCost": 1,
             "helperAddr": null,
-            "vrrp": null
+            "vrrp": null,
+            "natRole": "inside"
           },
           {
             "vlanId": 151,
@@ -4329,7 +4683,8 @@
             "aclOut": null,
             "ospfCost": 1,
             "helperAddr": null,
-            "vrrp": null
+            "vrrp": null,
+            "natRole": "outside"
           }
         ],
         "routes": [
@@ -4339,7 +4694,38 @@
             "nexthop": "10.0.10.1"
           }
         ],
-        "acls": [],
+        "acls": [
+          {
+            "num": 100,
+            "rules": [
+              {
+                "action": "deny",
+                "proto": "ip",
+                "src": {
+                  "net": "10.224.4.0",
+                  "wild": "0.0.0.255"
+                },
+                "dst": {
+                  "net": "10.0.0.0",
+                  "wild": "0.255.255.255"
+                },
+                "dstPort": null
+              },
+              {
+                "action": "permit",
+                "proto": "ip",
+                "src": {
+                  "net": "10.224.4.0",
+                  "wild": "0.0.0.255"
+                },
+                "dst": {
+                  "any": true
+                },
+                "dstPort": null
+              }
+            ]
+          }
+        ],
         "ospf": {
           "pid": 1,
           "routerId": null,
@@ -4348,14 +4734,62 @@
               "net": "10.0.10.0",
               "wild": "0.0.0.255",
               "area": 0
-            },
-            {
-              "net": "10.224.4.0",
-              "wild": "0.0.0.255",
-              "area": 0
             }
           ],
-          "passive": []
+          "passive": [
+            "Vlan2"
+          ]
+        },
+        "nat": {
+          "statics": [],
+          "dynamic": [
+            {
+              "aclNum": 100,
+              "ifname": "Vlan151",
+              "overload": true
+            }
+          ]
+        },
+        "vxlan": {
+          "vni": 10100,
+          "sourceInterface": "Vlan151",
+          "peers": [
+            {
+              "network": "10.224.1.0",
+              "len": 24,
+              "vtep": "10.0.10.11"
+            },
+            {
+              "network": "10.224.2.0",
+              "len": 24,
+              "vtep": "10.0.10.12"
+            },
+            {
+              "network": "10.224.3.0",
+              "len": 24,
+              "vtep": "10.0.10.13"
+            },
+            {
+              "network": "10.224.5.0",
+              "len": 24,
+              "vtep": "10.0.10.15"
+            },
+            {
+              "network": "10.224.6.0",
+              "len": 24,
+              "vtep": "10.0.10.16"
+            },
+            {
+              "network": "10.224.4.0",
+              "len": 24,
+              "vtep": "10.0.10.2"
+            },
+            {
+              "network": "10.224.4.0",
+              "len": 24,
+              "vtep": "10.0.10.3"
+            }
+          ]
         }
       }
     },
@@ -4794,7 +5228,8 @@
             "aclOut": null,
             "ospfCost": 1,
             "helperAddr": null,
-            "vrrp": null
+            "vrrp": null,
+            "natRole": "inside"
           },
           {
             "vlanId": 151,
@@ -4804,7 +5239,8 @@
             "aclOut": null,
             "ospfCost": 1,
             "helperAddr": null,
-            "vrrp": null
+            "vrrp": null,
+            "natRole": "outside"
           }
         ],
         "routes": [
@@ -4814,7 +5250,38 @@
             "nexthop": "10.0.10.1"
           }
         ],
-        "acls": [],
+        "acls": [
+          {
+            "num": 100,
+            "rules": [
+              {
+                "action": "deny",
+                "proto": "ip",
+                "src": {
+                  "net": "10.224.5.0",
+                  "wild": "0.0.0.255"
+                },
+                "dst": {
+                  "net": "10.0.0.0",
+                  "wild": "0.255.255.255"
+                },
+                "dstPort": null
+              },
+              {
+                "action": "permit",
+                "proto": "ip",
+                "src": {
+                  "net": "10.224.5.0",
+                  "wild": "0.0.0.255"
+                },
+                "dst": {
+                  "any": true
+                },
+                "dstPort": null
+              }
+            ]
+          }
+        ],
         "ospf": {
           "pid": 1,
           "routerId": null,
@@ -4823,14 +5290,62 @@
               "net": "10.0.10.0",
               "wild": "0.0.0.255",
               "area": 0
-            },
-            {
-              "net": "10.224.5.0",
-              "wild": "0.0.0.255",
-              "area": 0
             }
           ],
-          "passive": []
+          "passive": [
+            "Vlan2"
+          ]
+        },
+        "nat": {
+          "statics": [],
+          "dynamic": [
+            {
+              "aclNum": 100,
+              "ifname": "Vlan151",
+              "overload": true
+            }
+          ]
+        },
+        "vxlan": {
+          "vni": 10100,
+          "sourceInterface": "Vlan151",
+          "peers": [
+            {
+              "network": "10.224.1.0",
+              "len": 24,
+              "vtep": "10.0.10.11"
+            },
+            {
+              "network": "10.224.2.0",
+              "len": 24,
+              "vtep": "10.0.10.12"
+            },
+            {
+              "network": "10.224.3.0",
+              "len": 24,
+              "vtep": "10.0.10.13"
+            },
+            {
+              "network": "10.224.4.0",
+              "len": 24,
+              "vtep": "10.0.10.14"
+            },
+            {
+              "network": "10.224.6.0",
+              "len": 24,
+              "vtep": "10.0.10.16"
+            },
+            {
+              "network": "10.224.5.0",
+              "len": 24,
+              "vtep": "10.0.10.2"
+            },
+            {
+              "network": "10.224.5.0",
+              "len": 24,
+              "vtep": "10.0.10.3"
+            }
+          ]
         }
       }
     },
@@ -5269,7 +5784,8 @@
             "aclOut": null,
             "ospfCost": 1,
             "helperAddr": null,
-            "vrrp": null
+            "vrrp": null,
+            "natRole": "inside"
           },
           {
             "vlanId": 151,
@@ -5279,7 +5795,8 @@
             "aclOut": null,
             "ospfCost": 1,
             "helperAddr": null,
-            "vrrp": null
+            "vrrp": null,
+            "natRole": "outside"
           }
         ],
         "routes": [
@@ -5289,7 +5806,38 @@
             "nexthop": "10.0.10.1"
           }
         ],
-        "acls": [],
+        "acls": [
+          {
+            "num": 100,
+            "rules": [
+              {
+                "action": "deny",
+                "proto": "ip",
+                "src": {
+                  "net": "10.224.6.0",
+                  "wild": "0.0.0.255"
+                },
+                "dst": {
+                  "net": "10.0.0.0",
+                  "wild": "0.255.255.255"
+                },
+                "dstPort": null
+              },
+              {
+                "action": "permit",
+                "proto": "ip",
+                "src": {
+                  "net": "10.224.6.0",
+                  "wild": "0.0.0.255"
+                },
+                "dst": {
+                  "any": true
+                },
+                "dstPort": null
+              }
+            ]
+          }
+        ],
         "ospf": {
           "pid": 1,
           "routerId": null,
@@ -5298,14 +5846,62 @@
               "net": "10.0.10.0",
               "wild": "0.0.0.255",
               "area": 0
-            },
-            {
-              "net": "10.224.6.0",
-              "wild": "0.0.0.255",
-              "area": 0
             }
           ],
-          "passive": []
+          "passive": [
+            "Vlan2"
+          ]
+        },
+        "nat": {
+          "statics": [],
+          "dynamic": [
+            {
+              "aclNum": 100,
+              "ifname": "Vlan151",
+              "overload": true
+            }
+          ]
+        },
+        "vxlan": {
+          "vni": 10100,
+          "sourceInterface": "Vlan151",
+          "peers": [
+            {
+              "network": "10.224.1.0",
+              "len": 24,
+              "vtep": "10.0.10.11"
+            },
+            {
+              "network": "10.224.2.0",
+              "len": 24,
+              "vtep": "10.0.10.12"
+            },
+            {
+              "network": "10.224.3.0",
+              "len": 24,
+              "vtep": "10.0.10.13"
+            },
+            {
+              "network": "10.224.4.0",
+              "len": 24,
+              "vtep": "10.0.10.14"
+            },
+            {
+              "network": "10.224.5.0",
+              "len": 24,
+              "vtep": "10.0.10.15"
+            },
+            {
+              "network": "10.224.6.0",
+              "len": 24,
+              "vtep": "10.0.10.2"
+            },
+            {
+              "network": "10.224.6.0",
+              "len": 24,
+              "vtep": "10.0.10.3"
+            }
+          ]
         }
       }
     },
@@ -5436,7 +6032,7 @@
       "y": 129,
       "portCount": 1,
       "config": {
-        "ip": "10.96.0.10",
+        "ip": "10.96.0.11",
         "maskLen": 24,
         "gateway": "10.96.0.1",
         "nicAdminUp": true,
@@ -5462,7 +6058,11 @@
             "port": 80
           }
         ],
-        "vrrp": null
+        "vrrp": {
+          "gid": 10,
+          "vip": "10.96.0.10",
+          "priority": 120
+        }
       }
     },
     {
@@ -5817,6 +6417,47 @@
           }
         ],
         "vrrp": null
+      }
+    },
+    {
+      "id": "svc-deployment1-standby",
+      "type": "lb",
+      "name": "svc-deployment1-standby",
+      "x": 4001,
+      "y": 209,
+      "portCount": 1,
+      "config": {
+        "ip": "10.96.0.12",
+        "maskLen": 24,
+        "gateway": "10.96.0.1",
+        "nicAdminUp": true,
+        "httpServer": false,
+        "dhcpMode": false,
+        "dhcpd": null,
+        "lbPort": 80,
+        "backends": [
+          {
+            "ip": "10.224.1.12",
+            "port": 80
+          },
+          {
+            "ip": "10.224.3.11",
+            "port": 80
+          },
+          {
+            "ip": "10.224.6.11",
+            "port": 80
+          },
+          {
+            "ip": "10.224.5.12",
+            "port": 80
+          }
+        ],
+        "vrrp": {
+          "gid": 10,
+          "vip": "10.96.0.10",
+          "priority": 100
+        }
       }
     }
   ],
@@ -6408,6 +7049,16 @@
       },
       "b": {
         "dev": "svc-lb1",
+        "port": "eth0"
+      }
+    },
+    {
+      "a": {
+        "dev": "K8S_SVC_1",
+        "port": "GigabitEthernet0/3"
+      },
+      "b": {
+        "dev": "svc-deployment1-standby",
         "port": "eth0"
       }
     }

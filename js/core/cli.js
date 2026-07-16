@@ -238,6 +238,25 @@
           dev.stack.nat.removeDynamic(a[0], this._ifaceNameOf(a[1]) || a[1]); dev.changed();
         });
       }
+      if (caps.vxlan) {
+        this.add('config', 'vxlan vni <num> source-interface <rest>', 'cli.h.vxlanSource', (a) => {
+          const ifname = this._ifaceNameOf(a[1]);
+          if (!ifname) { this.out(t('cli.m.ifNotFound')); return; }
+          const peers = dev.stack.vxlan ? dev.stack.vxlan.peers : [];
+          if (!dev.stack.configureVxlan(a[0], ifname, peers)) { this.out(t('cli.m.vxlanBad')); return; }
+          dev.changed();
+        });
+        this.add('config', 'vxlan peer <ip> <mask> <ip>', 'cli.h.vxlanPeer', (a) => {
+          const vx = dev.stack.vxlan;
+          const len = IP.maskToLen(a[1]);
+          if (!vx || len === null) { this.out(t('cli.m.vxlanNeedSource')); return; }
+          const peers = vx.peers.filter(p => !(p.network === IP.networkOf(a[0], len) && p.len === len && p.vtep === a[2]));
+          peers.push({ network: a[0], len, vtep: a[2] });
+          dev.stack.configureVxlan(vx.vni, vx.sourceInterface, peers);
+          dev.changed();
+        });
+        this.add('config', 'no vxlan', 'cli.h.noVxlan', () => { dev.stack.clearVxlan(); dev.changed(); });
+      }
       if (caps.ospf) {
         this.add('config', 'router ospf <num>', 'cli.h.routerOspf', (a) => {
           dev.ospf.start(a[0]);
@@ -583,6 +602,7 @@
       if (caps.nat) {
         this.add(mode, 'show ip nat translations', 'cli.h.showNat', () => this._showNat());
       }
+      if (caps.vxlan) this.add(mode, 'show vxlan', 'cli.h.showVxlan', () => this._showVxlan());
     }
 
     _showIpIntBrief() {
@@ -769,6 +789,14 @@
       }
     }
 
+    _showVxlan() {
+      const vx = this.device.stack.vxlan;
+      if (!vx) { this.out(t('cli.o.vxlanNotConfigured')); return; }
+      this.out(`VNI ${vx.vni}  source-interface ${vx.sourceInterface}`);
+      this.out('Pod prefix          Remote VTEP');
+      for (const p of vx.peers) this.out(`${(`${p.network}/${p.len}`).padEnd(20)}${p.vtep}`);
+    }
+
     _showAcls() {
       const dev = this.device;
       if (!dev.acls.size) { this.out(t('cli.o.noAcls')); return; }
@@ -854,6 +882,11 @@
         for (const r of dev.stack.staticRoutes) {
           L.push(`ip route ${r.network} ${IP.lenToMask(r.len)} ${r.nexthop}`);
         }
+      }
+      if (caps.vxlan && dev.stack.vxlan) {
+        const vx = dev.stack.vxlan;
+        L.push(`vxlan vni ${vx.vni} source-interface ${vx.sourceInterface}`);
+        for (const p of vx.peers) L.push(`vxlan peer ${p.network} ${IP.lenToMask(p.len)} ${p.vtep}`);
       }
       if (caps.nat && dev.stack.nat) {
         for (const s of dev.stack.nat.statics) L.push(`ip nat inside source static ${s.localIp} ${s.globalIp}`);

@@ -13,10 +13,17 @@
       this.autoScrollEl = document.getElementById('pl-autoscroll');
       this.captureEl = document.getElementById('pl-capture');
       this.entries = [];
+      app.packetCaptureEnabled = this.captureEl.checked;
 
       app.sim.on('frame', (tx) => this.addFrame(tx));
       app.sim.on('note', (n) => this.addNote(n));
       this.filterEl.addEventListener('input', () => this.applyFilter());
+      this.captureEl.addEventListener('change', () => {
+        app.packetCaptureEnabled = this.captureEl.checked;
+        // Remove dots already in flight so disabling capture stops every
+        // protocol immediately, including VXLAN encapsulated packets.
+        if (!app.packetCaptureEnabled) app.sim.transmissions = [];
+      });
       document.getElementById('pl-clear').addEventListener('click', () => {
         this.entries = [];
         this.rowsEl.innerHTML = '';
@@ -24,7 +31,7 @@
     }
 
     addFrame(tx) {
-      if (!this.captureEl.checked) return;
+      if (!this.app.packetCaptureEnabled) return;
       const frame = tx.frame;
       const from = tx.fromPort;
       const to = tx.link.other(from);
@@ -47,6 +54,7 @@
     }
 
     addNote(n) {
+      if (!this.app.packetCaptureEnabled) return;
       const row = document.createElement('div');
       row.className = 'pl-row p-note';
       row.innerHTML = `<span class="pl-time">${(n.time / 1000).toFixed(2)}s</span>

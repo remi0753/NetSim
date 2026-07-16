@@ -25,7 +25,7 @@ python3 -m http.server   # → http://localhost:8000
 |---|---|
 | **L1 Physical** | Cabling, link up/down, `shutdown` / `no shutdown`, repeater hubs |
 | **L2 Data Link** | Ethernet frames, MAC address learning & aging, flooding, 802.1Q VLANs (access/trunk/native VLAN), **STP (root/designated/alternate port selection)**, **LACP port channels (flow-hash distribution)**, broadcast-storm detection via hop limit |
-| **L3 Network** | ARP, IPv4 routing (longest-prefix match + administrative distance), static routes, **OSPF-style dynamic routing (Hello / LSA flooding / SPF)**, **ECMP (flow-hash distribution over equal-cost paths)**, TTL decrement, ICMP, inter-VLAN routing via SVIs, **VRRP (virtual IP / virtual MAC / preempt)**, **DHCP (client / server / `ip helper-address` relay)**, **NAT/PAT (inside/outside interfaces, static NAT, interface overload = PAT, proxy-ARP for static publishing)** |
+| **L3 Network** | ARP, IPv4 routing (longest-prefix match + administrative distance), static routes, **OSPF-style dynamic routing (Hello / LSA flooding / SPF)**, **ECMP (flow-hash distribution over equal-cost paths)**, TTL decrement, ICMP, inter-VLAN routing via SVIs, **VRRP (virtual IP / virtual MAC / preempt)**, **DHCP (client / server / `ip helper-address` relay)**, **NAT/PAT (inside/outside interfaces, static NAT, interface overload = PAT, proxy-ARP for static publishing)**, **VXLAN (VTEP-to-VTEP Pod-prefix encapsulation)** |
 | **L4 Transport** | TCP (three-way handshake, FIN/RST), UDP, a simple HTTP server/client, extended ACLs, **L4 load balancer (round-robin + health checks)** |
 
 ### Devices

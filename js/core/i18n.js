@@ -392,6 +392,9 @@
     'cli.h.noNatStatic':   { ja: '静的NATを削除', en: 'Delete static NAT' },
     'cli.h.natDyn':        { ja: '動的PAT (ACL一致トラフィックを指定IFのアドレスへ過負荷変換)', en: 'Dynamic PAT (overload ACL-matched traffic onto an interface address)' },
     'cli.h.noNatDyn':      { ja: '動的PATを削除', en: 'Delete dynamic PAT' },
+    'cli.h.vxlanSource':   { ja: 'VXLAN VNIと送信元VTEPインターフェースを設定', en: 'Configure VXLAN VNI and source VTEP interface' },
+    'cli.h.vxlanPeer':     { ja: 'Podプレフィックスと宛先VTEPを追加', en: 'Add a Pod prefix to remote-VTEP mapping' },
+    'cli.h.noVxlan':       { ja: 'VXLAN設定を削除', en: 'Remove VXLAN configuration' },
     'cli.h.routerOspf':    { ja: 'OSPFプロセスを開始', en: 'Start an OSPF process' },
     'cli.h.noRouterOspf':  { ja: 'OSPFプロセスを停止', en: 'Stop the OSPF process' },
     'cli.h.routerId':      { ja: 'ルータIDを設定', en: 'Set the router ID' },
@@ -444,11 +447,14 @@
     'cli.h.showIntStatus': { ja: 'ポート状態一覧', en: 'Interface status' },
     'cli.h.showAcls':      { ja: 'ACL一覧', en: 'List ACLs' },
     'cli.h.showNat':       { ja: 'NAT変換テーブル', en: 'NAT translation table' },
+    'cli.h.showVxlan':     { ja: 'VXLAN VTEPとPodプレフィックス対応を表示', en: 'Show VXLAN VTEP and Pod-prefix mappings' },
 
     /* ---------- CLI runtime messages ---------- */
     'cli.m.invalidInput':  { ja: '% Invalid input detected: "{0}"  ("?" でヘルプ表示)', en: '% Invalid input detected: "{0}"  (type "?" for help)' },
     'cli.m.ambiguous':     { ja: '% Ambiguous command: 候補が複数あります ("?" で確認)', en: '% Ambiguous command: multiple matches (type "?" to check)' },
     'cli.m.natCleared':    { ja: '%NAT: 動的変換テーブルをクリアしました', en: '%NAT: cleared the dynamic translation table' },
+    'cli.m.vxlanBad':      { ja: '% VXLAN VNI は 1〜16777215、送信元は有効なL3インターフェースである必要があります', en: '% VXLAN VNI must be 1-16777215 and the source must be a valid L3 interface' },
+    'cli.m.vxlanNeedSource': { ja: '% 先に vxlan vni ... source-interface ... を設定してください', en: '% Configure VXLAN VNI and source interface first' },
     'cli.m.sviNotFound':   { ja: '% SVI が見つかりません', en: '% SVI not found' },
     'cli.m.ipRoutingAlways':{ ja: '(このモデルでは常に有効です)', en: '(always enabled in this model)' },
     'cli.m.vlanRange':     { ja: '% VLAN IDは1〜4094', en: '% VLAN ID must be 1–4094' },
@@ -483,6 +489,7 @@
     'cli.o.natUnsupported':{ ja: '% このデバイスはNAT非対応です', en: '% This device does not support NAT' },
     'cli.o.natNotConfigured':{ ja: '% NATは設定されていません', en: '% NAT is not configured' },
     'cli.o.natNoActive':   { ja: '  (アクティブな変換はありません)', en: '  (no active translations)' },
+    'cli.o.vxlanNotConfigured': { ja: '% VXLANは設定されていません', en: '% VXLAN is not configured' },
     'cli.o.noAcls':        { ja: '(ACLはありません)', en: '(no ACLs)' },
 
     /* ---------- host console ---------- */

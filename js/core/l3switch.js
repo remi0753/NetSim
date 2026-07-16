@@ -9,6 +9,8 @@
       this.stack = new NetSim.NetworkStack(this, { forwarding: true });
       this.svis = new Map();   // vlanId -> L3Interface
       this.acls = new Map();
+      this.stack.nat = new NetSim.Nat(this.stack);
+      this.stack.getAcl = (num) => this.acls.get(num);
       this.stack.aclCheck = (dir, iface, pkt) => {
         const num = dir === 'in' ? iface.aclIn : iface.aclOut;
         if (num == null) return true;
@@ -16,7 +18,7 @@
       };
       this.ospf = new NetSim.Ospf(this, this.stack);
     }
-    cliCaps() { return { l2: true, l3: true, svi: true, acl: true, ospf: true, vrrp: true, helper: true, lacp: true }; }
+    cliCaps() { return { l2: true, l3: true, svi: true, acl: true, ospf: true, vrrp: true, helper: true, lacp: true, nat: true, vxlan: true }; }
 
     createSvi(vlanId) {
       if (this.svis.has(vlanId)) return this.svis.get(vlanId);
@@ -81,11 +83,17 @@
       const cfg = super.serializeConfig();
       cfg.svis = [...this.svis].map(([vlanId, iface]) => ({
         vlanId, ip: iface.ip, maskLen: iface.maskLen, aclIn: iface.aclIn, aclOut: iface.aclOut,
-        ospfCost: iface.ospfCost, helperAddr: iface.helperAddr,
+        ospfCost: iface.ospfCost, helperAddr: iface.helperAddr, natRole: iface.natRole || null,
         vrrp: iface.vrrp ? { gid: iface.vrrp.gid, vip: iface.vrrp.vip, priority: iface.vrrp.priority } : null,
       }));
       cfg.routes = this.stack.staticRoutes.map(r => ({ network: r.network, len: r.len, nexthop: r.nexthop }));
       cfg.acls = [...this.acls].map(([num, rules]) => ({ num, rules }));
+      cfg.nat = this.stack.nat.serialize();
+      cfg.vxlan = this.stack.vxlan ? {
+        vni: this.stack.vxlan.vni,
+        sourceInterface: this.stack.vxlan.sourceInterface,
+        peers: this.stack.vxlan.peers.map(p => ({ network: p.network, len: p.len, vtep: p.vtep })),
+      } : null;
       cfg.ospf = this.ospf.serialize();
       return cfg;
     }
@@ -99,10 +107,13 @@
         iface.aclOut = s.aclOut != null ? s.aclOut : null;
         iface.ospfCost = s.ospfCost || 1;
         iface.helperAddr = s.helperAddr || null;
+        iface.natRole = s.natRole || null;
         if (s.vrrp) this.stack.configureVrrp(iface, s.vrrp.gid, s.vrrp.vip, s.vrrp.priority);
       }
       for (const r of cfg.routes || []) this.stack.addStaticRoute(r.network, r.len, r.nexthop);
       for (const a of cfg.acls || []) this.acls.set(a.num, a.rules);
+      if (cfg.nat) this.stack.nat.applyConfig(cfg.nat);
+      if (cfg.vxlan) this.stack.configureVxlan(cfg.vxlan.vni, cfg.vxlan.sourceInterface, cfg.vxlan.peers);
       if (cfg.ospf) this.ospf.applyConfig(cfg.ospf);
     }
   }

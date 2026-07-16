@@ -52,6 +52,9 @@
       this.mcastHandlers = new Map(); // '224.0.0.5' -> fn(iface, pkt)
       this.nat = null;                // NAT box (routers only); null = feature absent
       this.getAcl = null;             // fn(num) -> rules[]  (set by devices that own ACLs)
+      // Optional VXLAN endpoint. Peers map an inner IPv4 prefix to a remote
+      // VTEP; the physical underlay only routes the VTEP addresses.
+      this.vxlan = null;               // {vni, sourceInterface, peers:[{network,len,vtep}]}
       this._vrrpTicking = false;
     }
 
@@ -74,6 +77,21 @@
       const n = String(name).toLowerCase();
       return this.ifaces.find(i => i.name.toLowerCase() === n) || null;
     }
+    configureVxlan(vni, sourceInterface, peers) {
+      const source = this.getIface(sourceInterface);
+      if (!source || !Number.isInteger(Number(vni)) || Number(vni) < 1 || Number(vni) > 16777215) {
+        this.vxlan = null;
+        return false;
+      }
+      this.vxlan = {
+        vni: Number(vni), sourceInterface: source.name,
+        peers: (peers || []).map(p => ({
+          network: IP.networkOf(p.network, p.len), len: Number(p.len), vtep: p.vtep,
+        })).filter(p => p.network && IP.isValid(p.vtep) && p.len >= 0 && p.len <= 32),
+      };
+      return true;
+    }
+    clearVxlan() { this.vxlan = null; }
     ownsIp(ip) {
       return this.ifaces.some(i => i.ip === ip ||
         (i.vrrp && i.vrrp.state === 'master' && i.vrrp.vip === ip));
@@ -173,6 +191,17 @@
       }
       return NetSim.hashStr(s);
     }
+    _vxlanRoute(dst) {
+      if (!this.vxlan) return null;
+      const source = this.getIface(this.vxlan.sourceInterface);
+      if (!source || !source.ip || !source.isUp()) return null;
+      let best = null;
+      for (const peer of this.vxlan.peers) {
+        if (!IP.inNetwork(dst, peer.network, peer.len)) continue;
+        if (!best || peer.len > best.len) best = peer;
+      }
+      return best ? { source, peer: best } : null;
+    }
 
     /* ---------- ARP ---------- */
     _arpLearn(ip, mac, ifname) {
@@ -230,6 +259,22 @@
         return;
       }
       const route = this.lookupRoute(pkt.dst, pkt);
+      // A directly connected subnet always wins. For any other destination a
+      // configured VXLAN Pod-prefix map is authoritative over a default route.
+      // This is what lets a Node keep only underlay routes while reaching Pods
+      // on other Nodes.
+      const vxlan = this._connectedLookup(pkt.dst) ? null : this._vxlanRoute(pkt.dst);
+      if (vxlan) {
+          const outer = pdu.ipv4(vxlan.source.ip, vxlan.peer.vtep, 'vxlan', {
+            vni: this.vxlan.vni,
+            inner: NetSim.clone(pkt),
+          });
+          // The outer packet follows the ordinary underlay route. Inner Pod
+          // addresses remain unchanged and therefore need not be routed there.
+          this.sendIp(outer, opts);
+          this.sim.note('vxlan', `${this.hostname()}: VNI ${this.vxlan.vni} ${pkt.src} -> ${pkt.dst} via ${vxlan.peer.vtep}`);
+          return;
+      }
       if (!route) {
         if (opts.onNoRoute) opts.onNoRoute(pkt);
         return;
@@ -270,6 +315,11 @@
         return;
       }
 
+      if (pkt.proto === 'vxlan') {
+        if (this.ownsIp(pkt.dst)) this._onVxlan(pkt);
+        return;
+      }
+
       const isMine = this.ownsIp(pkt.dst) || this.isLocalBroadcast(pkt.dst);
       if (this.aclCheck && iface.aclIn != null && !this.aclCheck('in', iface, pkt)) {
         this.sim.note('acl', NetSim.t('net.acl.denied', this.hostname(), pkt.src, pkt.dst, pkt.proto, iface.name, 'in'));
@@ -284,6 +334,17 @@
       if (isMine) { this._deliverLocal(iface, pkt); return; }
       if (!this.forwarding) return;   // hosts silently drop transit traffic
       this._forward(iface, pkt);
+    }
+
+    _onVxlan(pkt) {
+      const data = pkt.payload;
+      if (!this.vxlan || !data || data.vni !== this.vxlan.vni || !data.inner || data.inner.l3 !== 'ipv4') return;
+      if (this.vxlan.peers.length && !this.vxlan.peers.some(p => p.vtep === pkt.src)) return;
+      const inner = NetSim.clone(data.inner);
+      // Decapsulation is not another IP routing hop. The receiving VTEP sends
+      // the inner packet to its directly attached Pod subnet at the same TTL.
+      this.sendIp(inner, { forwarded: true });
+      this.sim.note('vxlan', `${this.hostname()}: decapsulated VNI ${data.vni} ${inner.src} -> ${inner.dst}`);
     }
 
     _forward(inIface, pkt) {

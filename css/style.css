@@ -17,6 +17,7 @@
   --c-icmp: #4ade80;
   --c-tcp: #60a5fa;
   --c-udp: #c084fc;
+  --c-vxlan: #f97316;
   --c-ctrl: #ec4899;
   --c-other: #94a3b8;
 }
@@ -229,6 +230,7 @@ body {
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 3px; }
 .dot.arp { background: var(--c-arp); } .dot.icmp { background: var(--c-icmp); }
 .dot.tcp { background: var(--c-tcp); } .dot.udp { background: var(--c-udp); }
+.dot.vxlan { background: var(--c-vxlan); }
 .dot.ctrl { background: var(--c-ctrl); }
 #pl-rows { flex: 1; overflow-y: auto; font-family: var(--mono); font-size: 11.5px; }
 .pl-row { padding: 1px 10px; cursor: pointer; display: flex; gap: 10px; white-space: nowrap; }
@@ -240,6 +242,7 @@ body {
 .pl-row.p-icmp .pl-sum { color: var(--c-icmp); }
 .pl-row.p-tcp .pl-sum { color: var(--c-tcp); }
 .pl-row.p-udp .pl-sum { color: var(--c-udp); }
+.pl-row.p-vxlan .pl-sum { color: var(--c-vxlan); }
 .pl-row.p-ctrl .pl-sum { color: var(--c-ctrl); }
 .pl-row.p-note { color: var(--yellow); }
 .pl-detail {
