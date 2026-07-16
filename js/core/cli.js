@@ -172,12 +172,20 @@
         this.add('config', 'ip routing', 'cli.h.ipRouting', () => this.out(t('cli.m.ipRoutingAlways')));
       }
       if (caps.l2) {
+        this.add('config', 'spanning-tree mode <word>', 'cli.h.stpMode', (a) => {
+          const mode = a[0].toLowerCase();
+          if (mode !== 'rstp' && mode !== 'rapid-pvst') {
+            this.out('Supported modes: rstp, rapid-pvst.');
+            return;
+          }
+          dev.stpMode = mode;
+          dev.changed();
+        });
         this.add('config', 'spanning-tree vlan <num> priority <num>', 'cli.h.stpPriority', (a) => {
           if (a[1] > 61440 || a[1] % 4096 !== 0) {
             this.out('Priority must be a multiple of 4096 (0-61440).');
             return;
           }
-          // The simulator intentionally uses one common tree for all VLANs.
           dev.stpPriority = a[1];
           dev.changed();
         });
@@ -564,6 +572,7 @@
       }
       if (caps.l2) {
         this.add(mode, 'show spanning-tree', 'cli.h.showStp', () => this._showSpanningTree());
+        this.add(mode, 'show spanning-tree vlan <num>', 'cli.h.showStp', (a) => this._showSpanningTree(a[0]));
         this.add(mode, 'show mac address-table', 'cli.h.showMac', () => this._showMacTable());
         this.add(mode, 'show vlan brief', 'cli.h.showVlan', () => this._showVlanBrief());
         this.add(mode, 'show interfaces status', 'cli.h.showIntStatus', () => this._showIntStatus());
@@ -695,15 +704,23 @@
       }
     }
 
-    _showSpanningTree() {
+    _showSpanningTree(vlan) {
       const dev = this.device;
-      const rootMac = dev.stpRootId.slice(6).match(/.{1,2}/g).join(':');
-      this.out('Spanning tree enabled (simulated rapid convergence)');
-      this.out(`Root ID    Priority ${dev.stpRootId.slice(0, 5)}  Address ${rootMac}  Cost ${dev.stpRootCost}`);
+      const shownVlan = vlan == null ? 1 : vlan;
+      const tree = dev.stpMode === 'rapid-pvst' ? dev.stpVlanRoots.get(shownVlan) : {
+        rootId: dev.stpRootId, cost: dev.stpRootCost, rootPort: dev.stpRootPort,
+      };
+      if (!tree) { this.out(`No spanning-tree instance for VLAN ${shownVlan}.`); return; }
+      const rootMac = tree.rootId.slice(6).match(/.{1,2}/g).join(':');
+      this.out(`Spanning tree mode ${dev.stpMode} (simulated rapid convergence)`);
+      if (dev.stpMode === 'rapid-pvst') this.out(`VLAN ${shownVlan}`);
+      this.out(`Root ID    Priority ${tree.rootId.slice(0, 5)}  Address ${rootMac}  Cost ${tree.cost}`);
       this.out(`Bridge ID  Priority ${dev.stpPriority}  Address ${dev.baseMac}`);
       this.out('Interface           Role         State       Cost');
       for (const p of dev.ports) {
-        this.out(`${p.shortName.padEnd(20)}${(p.stpRole || 'designated').padEnd(13)}${(p.stpState || 'forwarding').padEnd(12)}4`);
+        const state = dev.stpMode === 'rapid-pvst' ? p.stpVlans.get(shownVlan) : p.stpCommon;
+        if (!state) continue;
+        this.out(`${p.shortName.padEnd(20)}${state.role.padEnd(13)}${state.state.padEnd(12)}4`);
       }
     }
 
@@ -769,6 +786,10 @@
       L.push(`hostname ${dev.name}`);
       L.push('!');
       if (caps.l2) {
+        if (dev.stpMode !== 'rapid-pvst') {
+          L.push(`spanning-tree mode ${dev.stpMode}`);
+          L.push('!');
+        }
         if (dev.stpPriority !== 32768) {
           L.push(`spanning-tree vlan 1 priority ${dev.stpPriority}`);
           L.push('!');

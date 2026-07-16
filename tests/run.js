@@ -89,6 +89,32 @@ section('STP: 冗長L2リンクのループ防止');
   ok(sw3.stpRootId === sw3.stpBridgeId(), '優先度変更でSW3がルートブリッジ');
 }
 
+/* ---------- Rapid PVST+ equivalent ---------- */
+section('STP: VLAN単位ツリー (Rapid PVST+相当)');
+{
+  const { net } = fresh();
+  const core = net.addDevice('switch', 0, 0, 'CORE');
+  const sw5 = net.addDevice('l3switch', 0, 0, 'L3SW5');
+  const sw6 = net.addDevice('l3switch', 0, 0, 'L3SW6');
+  net.connect(core, 'Gi0/1', sw5, 'Gi0/1');       // VLAN 1 only
+  net.connect(core, 'Gi0/2', sw6, 'Gi0/1');       // VLAN 1 only
+  net.connect(sw5, 'Gi0/3', sw6, 'Gi0/3');        // VLAN 200 only
+  for (const sw of [sw5, sw6]) {
+    sw.addVlan(200);
+    const c = sw.cfg(sw.getPort('Gi0/3'));
+    c.mode = 'trunk'; c.allowed = [200];
+  }
+  net.recomputeStp();
+  ok(sw5.getPort('Gi0/3').stpVlans.get(200).state === 'forwarding' &&
+    sw6.getPort('Gi0/3').stpVlans.get(200).state === 'forwarding',
+  'VLAN 200だけを通すリンクは、VLAN 1の物理ループ候補により遮断されない');
+
+  for (const sw of [core, sw5, sw6]) sw.stpMode = 'rstp';
+  net.recomputeStp();
+  ok([sw5, sw6].some(sw => sw.getPort('Gi0/3').stpState === 'blocking'),
+    '共通ツリー(RSTP)へ切替時は冗長リンクを遮断する');
+}
+
 /* ---------- L1: hub ---------- */
 section('L1: ハブ経由 ping');
 {

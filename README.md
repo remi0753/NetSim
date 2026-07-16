@@ -101,7 +101,8 @@ SW1(config-if)# channel-group 1 mode active   ← LACP (bundle two links into on
 SW1(config-if)# switchport mode trunk
 SW1# show etherchannel summary
 SW1# show mac address-table                   ← the channel appears as Po1
-SW1# show spanning-tree                       ← root / designated / alternate port states
+SW1# show spanning-tree vlan 10               ← VLANごとのroot / designated / alternate状態
+SW1(config)# spanning-tree mode rstp          ← 共通ツリーに切り替え (既定はRapid PVST+相当)
 SW1(config)# spanning-tree vlan 1 priority 24576
 ```
 
@@ -173,7 +174,7 @@ tests/                Node tests and browser tests
 
 - OSPF is area 0 only, with no DR election (SPF treats subnets as pseudo-nodes). The real-device configuration model is preserved
 - LACP is a static bundle that omits the negotiation (LACPDU)
-- STP uses one common tree for all VLANs and converges immediately after a topology change; it omits PVST+/MSTP, BPDU timing, and listening/learning timer states
+- STP defaults to a Rapid PVST+ equivalent (one tree per VLAN); `spanning-tree mode rstp` selects a common tree. Both converge immediately after a topology change and omit BPDU timing, listening/learning timer states, and MSTP
 - TCP is a simplified implementation with no retransmission or window control
 - NAT is "inside source" direction only (static NAT + interface overload = PAT). Dynamic NAT pools, `outside source`, and per-port static NAT are not implemented
 - IPv6 / BGP are not implemented

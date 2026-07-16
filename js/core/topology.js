@@ -134,10 +134,10 @@
     }
 
     /*
-     * Common rapid spanning tree for the L2 bridge graph.  This is an
-     * immediate-convergence model: it uses the normal root-port and
-     * designated-port tie breakers, while omitting 802.1D timer states so a
-     * topology edit never produces a transient broadcast storm.
+     * Immediate-convergence STP.  `rstp` uses one common tree; the default
+     * `rapid-pvst` computes one tree per VLAN and considers only links that
+     * actually carry that VLAN.  Both retain the normal root/designated/
+     * alternate-port tie breakers while omitting timer states.
      */
     recomputeStp() {
       const switches = this.devices.filter(d => d instanceof NetSim.L2Switch);
@@ -149,106 +149,139 @@
         }
         return 0;
       };
+      const carries = (sw, port, vlan) => {
+        const c = sw.cfg(port);
+        return sw.vlanActive(vlan) && (c.mode === 'access'
+          ? c.accessVlan === vlan : sw.trunkAllows(c, vlan));
+      };
       const isBundle = (a, b) => {
         const ac = a.device.cfg(a), bc = b.device.cfg(b);
         return ac && bc && ac.channel != null && bc.channel != null;
       };
-      // A paired port-channel is one STP segment, rather than two parallel
-      // links.  This preserves the existing LACP forwarding behaviour.
-      const byKey = new Map();
-      for (const link of this.links) {
-        const a = link.a, b = link.b;
-        if (!(a.device instanceof NetSim.L2Switch) || !(b.device instanceof NetSim.L2Switch)) continue;
-        if (!a.isUp() || !b.isUp()) continue;
-        const ak = isBundle(a, b) ? `${a.device.id}:${a.device.logicalKey(a)}` : a.id;
-        const bk = isBundle(a, b) ? `${b.device.id}:${b.device.logicalKey(b)}` : b.id;
-        const key = ak < bk ? `${ak}|${bk}` : `${bk}|${ak}`;
-        if (!byKey.has(key)) byKey.set(key, { a: a.device, b: b.device, members: [] });
-        const edge = byKey.get(key);
-        edge.members.push(edge.a === a.device ? { a, b } : { a: b, b: a });
-      }
-      const edges = [...byKey.values()];
-      const adjacent = new Map(switches.map(sw => [sw, []]));
-      for (const edge of edges) { adjacent.get(edge.a).push(edge); adjacent.get(edge.b).push(edge); }
+      const store = (sw, port, vlan, role, state) => {
+        const entry = { role, state };
+        if (vlan == null) port.stpCommon = entry;
+        else port.stpVlans.set(vlan, entry);
+      };
 
       for (const sw of switches) {
+        sw.stpVlanRoots = new Map();
         for (const port of sw.ports) {
-          port.stpState = port.isUp() ? 'forwarding' : 'disabled';
-          port.stpRole = port.isUp() ? 'designated' : 'disabled';
+          port.stpCommon = null;
+          port.stpVlans = new Map();
         }
-        sw.stpRootId = sw.stpBridgeId();
-        sw.stpRootCost = 0;
-        sw.stpRootPort = null;
       }
 
-      const visited = new Set();
-      for (const seed of switches) {
-        if (visited.has(seed)) continue;
-        const component = [], pending = [seed];
-        visited.add(seed);
-        while (pending.length) {
-          const sw = pending.pop(); component.push(sw);
-          for (const edge of adjacent.get(sw)) {
-            const peer = edge.a === sw ? edge.b : edge.a;
-            if (!visited.has(peer)) { visited.add(peer); pending.push(peer); }
+      const calculate = (mode, vlan) => {
+        const nodes = switches.filter(sw => sw.stpMode === mode && (vlan == null || sw.vlanActive(vlan)));
+        if (!nodes.length) return;
+        for (const sw of nodes) {
+          for (const p of sw.ports) {
+            if (!p.isUp() || (vlan != null && !carries(sw, p, vlan))) continue;
+            store(sw, p, vlan, 'designated', 'forwarding');
           }
         }
-        const root = component.reduce((best, sw) => sw.stpBridgeId() < best.stpBridgeId() ? sw : best, component[0]);
-        // Dijkstra with the STP received-vector tie breakers.
-        const route = new Map([[root, { cost: 0, edge: null, tie: [] }]]);
-        const settled = new Set();
-        while (settled.size < component.length) {
-          let current = null;
+        const nodeSet = new Set(nodes), byKey = new Map();
+        for (const link of this.links) {
+          const a = link.a, b = link.b;
+          if (!nodeSet.has(a.device) || !nodeSet.has(b.device) || !a.isUp() || !b.isUp()) continue;
+          if (vlan != null && (!carries(a.device, a, vlan) || !carries(b.device, b, vlan))) continue;
+          const ak = isBundle(a, b) ? `${a.device.id}:${a.device.logicalKey(a)}` : a.id;
+          const bk = isBundle(a, b) ? `${b.device.id}:${b.device.logicalKey(b)}` : b.id;
+          const key = ak < bk ? `${ak}|${bk}` : `${bk}|${ak}`;
+          if (!byKey.has(key)) byKey.set(key, { a: a.device, b: b.device, members: [] });
+          const edge = byKey.get(key);
+          edge.members.push(edge.a === a.device ? { a, b } : { a: b, b: a });
+        }
+        const edges = [...byKey.values()];
+        const adjacent = new Map(nodes.map(sw => [sw, []]));
+        for (const edge of edges) { adjacent.get(edge.a).push(edge); adjacent.get(edge.b).push(edge); }
+        const visited = new Set();
+        for (const seed of nodes) {
+          if (visited.has(seed)) continue;
+          const component = [], pending = [seed]; visited.add(seed);
+          while (pending.length) {
+            const sw = pending.pop(); component.push(sw);
+            for (const edge of adjacent.get(sw)) {
+              const peer = edge.a === sw ? edge.b : edge.a;
+              if (!visited.has(peer)) { visited.add(peer); pending.push(peer); }
+            }
+          }
+          const root = component.reduce((best, sw) => sw.stpBridgeId() < best.stpBridgeId() ? sw : best, component[0]);
+          const route = new Map([[root, { cost: 0, edge: null, tie: [] }]]), settled = new Set();
+          while (settled.size < component.length) {
+            let current = null;
+            for (const sw of component) {
+              if (settled.has(sw) || !route.has(sw)) continue;
+              const r = route.get(sw);
+              if (!current || compare([r.cost, ...r.tie, sw.stpBridgeId()], [route.get(current).cost, ...route.get(current).tie, current.stpBridgeId()]) < 0) current = sw;
+            }
+            if (!current) break;
+            settled.add(current);
+            for (const edge of adjacent.get(current)) {
+              const next = edge.a === current ? edge.b : edge.a;
+              if (settled.has(next)) continue;
+              const member = edge.members[0];
+              const local = member.a.device === current ? member.a : member.b;
+              const remote = member.a.device === current ? member.b : member.a;
+              const candidate = { cost: route.get(current).cost + 1, edge,
+                tie: [current.stpBridgeId(), current.stpPortId(local), remote.device.stpPortId(remote)] };
+              const old = route.get(next);
+              if (!old || compare([candidate.cost, ...candidate.tie], [old.cost, ...old.tie]) < 0) route.set(next, candidate);
+            }
+          }
+          const memberSet = new Set(component);
           for (const sw of component) {
-            if (settled.has(sw) || !route.has(sw)) continue;
-            const r = route.get(sw);
-            if (!current || compare([r.cost, ...r.tie, sw.stpBridgeId()], [route.get(current).cost, ...route.get(current).tie, current.stpBridgeId()]) < 0) current = sw;
+            const r = route.get(sw) || { cost: 0, edge: null };
+            const rootPort = r.edge && r.edge.members.find(m => m.a.device === sw || m.b.device === sw);
+            const state = { rootId: root.stpBridgeId(), cost: r.cost,
+              rootPort: rootPort ? (rootPort.a.device === sw ? rootPort.a : rootPort.b) : null };
+            if (vlan == null) { sw.stpRootId = state.rootId; sw.stpRootCost = state.cost; sw.stpRootPort = state.rootPort; }
+            else sw.stpVlanRoots.set(vlan, state);
           }
-          if (!current) break;
-          settled.add(current);
-          for (const edge of adjacent.get(current)) {
-            const next = edge.a === current ? edge.b : edge.a;
-            if (settled.has(next)) continue;
-            const member = edge.members[0];
-            const local = member.a.device === current ? member.a : member.b;
-            const remote = member.a.device === current ? member.b : member.a;
-            const candidate = { cost: route.get(current).cost + 1, edge,
-              tie: [current.stpBridgeId(), current.stpPortId(local), remote.device.stpPortId(remote)] };
-            const old = route.get(next);
-            if (!old || compare([candidate.cost, ...candidate.tie], [old.cost, ...old.tie]) < 0) route.set(next, candidate);
-          }
-        }
-        const memberSet = new Set(component);
-        for (const sw of component) {
-          const r = route.get(sw) || { cost: 0, edge: null };
-          sw.stpRootId = root.stpBridgeId();
-          sw.stpRootCost = r.cost;
-          if (r.edge) {
-            const member = r.edge.members.find(m => m.a.device === sw || m.b.device === sw);
-            sw.stpRootPort = member.a.device === sw ? member.a : member.b;
+          for (const edge of edges) {
+            if (!memberSet.has(edge.a) || !memberSet.has(edge.b)) continue;
+            const m0 = edge.members[0];
+            const ar = vlan == null ? { rootId: edge.a.stpRootId, cost: edge.a.stpRootCost, rootPort: edge.a.stpRootPort } : edge.a.stpVlanRoots.get(vlan);
+            const br = vlan == null ? { rootId: edge.b.stpRootId, cost: edge.b.stpRootCost, rootPort: edge.b.stpRootPort } : edge.b.stpVlanRoots.get(vlan);
+            const av = [ar.rootId, ar.cost, edge.a.stpBridgeId(), edge.a.stpPortId(m0.a)];
+            const bv = [br.rootId, br.cost, edge.b.stpBridgeId(), edge.b.stpPortId(m0.b)];
+            const aDesignated = compare(av, bv) < 0;
+            for (const member of edge.members) {
+              const setRole = (sw, port, designated, r) => {
+                const rootPort = r.rootPort && sw.logicalKey(r.rootPort) === sw.logicalKey(port);
+                store(sw, port, vlan, rootPort ? 'root' : (designated ? 'designated' : 'alternate'),
+                  rootPort || designated ? 'forwarding' : 'blocking');
+              };
+              setRole(edge.a, member.a, aDesignated, ar);
+              setRole(edge.b, member.b, !aDesignated, br);
+            }
           }
         }
-        for (const edge of edges) {
-          if (!memberSet.has(edge.a) || !memberSet.has(edge.b)) continue;
-          const m0 = edge.members[0];
-          const aVector = [edge.a.stpRootId, edge.a.stpRootCost, edge.a.stpBridgeId(), edge.a.stpPortId(m0.a)];
-          const bVector = [edge.b.stpRootId, edge.b.stpRootCost, edge.b.stpBridgeId(), edge.b.stpPortId(m0.b)];
-          const aDesignated = compare(aVector, bVector) < 0;
-          for (const member of edge.members) {
-            const setRole = (sw, port, designated) => {
-              const rootPort = sw.stpRootPort && sw.logicalKey(sw.stpRootPort) === sw.logicalKey(port);
-              port.stpRole = rootPort ? 'root' : (designated ? 'designated' : 'alternate');
-              port.stpState = rootPort || designated ? 'forwarding' : 'blocking';
-            };
-            setRole(edge.a, member.a, aDesignated);
-            setRole(edge.b, member.b, !aDesignated);
-          }
-        }
-      }
+      };
+
+      calculate('rstp', null);
+      const vlans = new Set();
+      for (const sw of switches) if (sw.stpMode === 'rapid-pvst') for (const vlan of sw.vlans.keys()) vlans.add(vlan);
+      for (const vlan of vlans) calculate('rapid-pvst', vlan);
+
       for (const sw of switches) {
-        const changed = sw.ports.some(p => p._lastStpState && p._lastStpState !== p.stpState);
-        for (const p of sw.ports) p._lastStpState = p.stpState;
-        if (changed) sw.clearMacTable();
+        for (const p of sw.ports) {
+          if (sw.stpMode === 'rstp') {
+            const s = p.stpCommon || { role: p.isUp() ? 'designated' : 'disabled', state: p.isUp() ? 'forwarding' : 'disabled' };
+            p.stpRole = s.role; p.stpState = s.state;
+          } else {
+            const values = [...p.stpVlans.values()];
+            const forwarding = values.find(s => s.state === 'forwarding');
+            p.stpState = !p.isUp() ? 'disabled' : (forwarding ? 'forwarding' : (values.length ? 'blocking' : 'forwarding'));
+            p.stpRole = !p.isUp() ? 'disabled' : (forwarding ? forwarding.role : (values.length ? 'alternate' : 'designated'));
+          }
+        }
+        const root = sw.stpMode === 'rapid-pvst' ? (sw.stpVlanRoots.get(1) || [...sw.stpVlanRoots.values()][0]) : null;
+        if (root) { sw.stpRootId = root.rootId; sw.stpRootCost = root.cost; sw.stpRootPort = root.rootPort; }
+        const signature = sw.ports.map(p => `${p.stpState}:${[...p.stpVlans].map(([v, s]) => `${v}:${s.state}`).join(',')}`).join('|');
+        if (sw._lastStpSignature && sw._lastStpSignature !== signature) sw.clearMacTable();
+        sw._lastStpSignature = signature;
       }
     }
 

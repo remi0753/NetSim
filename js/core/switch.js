@@ -10,9 +10,11 @@
       super(net, name);
       this.baseMac = NetSim.genMac();
       this.stpPriority = STP_PRIORITY_DEFAULT;
+      this.stpMode = 'rapid-pvst';
       this.stpRootId = null;
       this.stpRootCost = 0;
       this.stpRootPort = null;
+      this.stpVlanRoots = new Map();
       this.vlans = new Map([[1, { name: 'default' }]]);
       this.macTable = new Map();   // "vlan|mac" -> {port, ts}
       this.portCfg = new Map();    // port.id -> {mode, accessVlan, allowed:'all'|number[], nativeVlan}
@@ -30,7 +32,12 @@
     // `disabled` is a snapshot state from the last tree calculation.  A
     // directly configured interface can come up before it emits a topology
     // change (sample builders do this), and it must not be treated as blocked.
-    isStpForwarding(port) { return port.stpState !== 'blocking'; }
+    isStpForwarding(port, vlan) {
+      const entry = this.stpMode === 'rapid-pvst' && vlan != null
+        ? port.stpVlans && port.stpVlans.get(vlan)
+        : port.stpCommon;
+      return !entry || entry.state !== 'blocking';
+    }
 
     addVlan(id, name) {
       if (!this.vlans.has(id)) this.vlans.set(id, { name: name || `VLAN${String(id).padStart(4, '0')}` });
@@ -60,7 +67,7 @@
 
     /* send frame out of a port in a vlan, applying tagging rules; false if filtered */
     egress(port, vlan, frame) {
-      if (!port.link || !port.isUp() || !this.isStpForwarding(port)) return false;
+      if (!port.link || !port.isUp() || !this.isStpForwarding(port, vlan)) return false;
       const c = this.cfg(port);
       const out = NetSim.clone(frame);
       if (c.mode === 'access') {
@@ -136,9 +143,9 @@
 
     receiveFrame(port, frame) {
       if (!port.isUp()) return;
-      if (!this.isStpForwarding(port)) return;
       const vlan = this.ingressVlan(port, frame);
       if (vlan == null) return;
+      if (!this.isStpForwarding(port, vlan)) return;
       this.learn(vlan, frame.src, port);
       this.l2Forward(port, vlan, frame);
       this.deliverToCpu(port, vlan, frame);   // hook for L3 switch SVIs
@@ -178,6 +185,7 @@
     serializeConfig() {
       return {
         stpPriority: this.stpPriority,
+        stpMode: this.stpMode,
         vlans: [...this.vlans].map(([id, v]) => ({ id, name: v.name })),
         ports: this.ports.map(p => {
           const c = this.cfg(p);
@@ -193,6 +201,7 @@
     applyConfig(cfg) {
       if (!cfg) return;
       if (cfg.stpPriority != null) this.stpPriority = cfg.stpPriority;
+      if (cfg.stpMode === 'rstp' || cfg.stpMode === 'rapid-pvst') this.stpMode = cfg.stpMode;
       for (const v of cfg.vlans || []) this.addVlan(v.id, v.name);
       for (const pc of cfg.ports || []) {
         const p = this.getPort(pc.name);

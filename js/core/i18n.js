@@ -409,6 +409,7 @@
     'cli.h.swAllowed':     { ja: '許可VLANを設定 (all | 10,20 | add 30)', en: 'Set allowed VLANs (all | 10,20 | add 30)' },
     'cli.h.swNative':      { ja: 'ネイティブVLANを設定', en: 'Set the native VLAN' },
     'cli.h.stpPriority':   { ja: 'STPブリッジ優先度を設定', en: 'Set STP bridge priority' },
+    'cli.h.stpMode':       { ja: 'STPモードを設定', en: 'Set STP mode' },
     'cli.h.ipAddress':     { ja: 'IPアドレスを設定', en: 'Set the IP address' },
     'cli.h.noIpAddress':   { ja: 'IPアドレスを削除', en: 'Remove the IP address' },
     'cli.h.ospfCost':      { ja: 'OSPFコストを設定', en: 'Set the OSPF cost' },
