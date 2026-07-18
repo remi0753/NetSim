@@ -223,8 +223,8 @@
       else if (dev.type === 'lb') html += this._hostHtml(dev) + this._lbHtml(dev) + this._vrrpHtml(dev);
       else if (dev.type === 'hub') html += this._hubHtml(dev);
       else if (dev.type === 'switch') html += this._switchHtml(dev);
-      else if (dev.type === 'l3switch') html += this._switchHtml(dev) + this._sviHtml(dev) + this._vrrpHtml(dev) + this._routesHtml(dev) + this._ospfNoteHtml(dev);
-      else if (dev.type === 'router') html += this._routerHtml(dev) + this._vrrpHtml(dev) + this._natHtml(dev) + this._routesHtml(dev) + this._ospfNoteHtml(dev);
+      else if (dev.type === 'l3switch') html += this._switchHtml(dev) + this._sviHtml(dev) + this._aclHtml(dev) + this._vxlanHtml(dev) + this._vrrpHtml(dev) + this._routesHtml(dev) + this._ospfNoteHtml(dev);
+      else if (dev.type === 'router') html += this._routerHtml(dev) + this._aclHtml(dev) + this._vrrpHtml(dev) + this._natHtml(dev) + this._routesHtml(dev) + this._ospfNoteHtml(dev);
 
       b.innerHTML = html;
 
@@ -560,6 +560,59 @@
         dev.changed();
         this.render(this.sel);
       });
+    }
+
+    /* ---------- ACL (router / L3 switch, read-only) ---------- */
+    _aclHtml(dev) {
+      const lists = [...dev.acls.entries()];
+      const ruleRows = lists.length
+        ? lists.flatMap(([num, rules]) => rules.length
+          ? rules.map(rule => `<tr><td>${num}</td><td>${esc(NetSim.acl.ruleText(rule))}</td></tr>`)
+          : [`<tr><td>${num}</td><td>${t('insp.none')}</td></tr>`]).join('')
+        : `<tr><td colspan="2">${t('insp.none')}</td></tr>`;
+      const ifaces = dev.type === 'l3switch'
+        ? [...dev.svis.values()]
+        : dev.ports.map(p => p.l3iface);
+      const applied = ifaces.filter(i => i.aclIn != null || i.aclOut != null);
+      const appliedRows = applied.length
+        ? applied.map(i => `<tr><td>${esc(i.name)}</td><td>${i.aclIn == null ? '—' : i.aclIn}</td><td>${i.aclOut == null ? '—' : i.aclOut}</td></tr>`).join('')
+        : `<tr><td colspan="3">${t('insp.none')}</td></tr>`;
+      return `<div class="insp-section">
+        <div class="sec-title">${t('insp.acl.title')}</div>
+        <table class="insp-table">
+          <tr><th>ACL</th><th>${t('insp.acl.rule')}</th></tr>
+          ${ruleRows}
+        </table>
+        <div class="sec-title" style="margin-top:10px">${t('insp.acl.applied')}</div>
+        <table class="insp-table">
+          <tr><th>IF</th><th>in</th><th>out</th></tr>
+          ${appliedRows}
+        </table>
+        <div class="insp-note">${t('insp.acl.note')}</div>
+      </div>`;
+    }
+
+    /* ---------- VXLAN (L3 switch VTEP) ---------- */
+    _vxlanHtml(dev) {
+      const vx = dev.stack.vxlan;
+      if (!vx) {
+        return `<div class="insp-section">
+          <div class="sec-title">${t('insp.vxlan.title')}</div>
+          <div class="insp-note">${t('insp.vxlan.off')}</div>
+          <div class="insp-note">${t('insp.vxlan.note')}</div>
+        </div>`;
+      }
+      const source = dev.stack.getIface(vx.sourceInterface);
+      const localVtep = source && source.ip ? source.ip : '—';
+      return `<div class="insp-section">
+        <div class="sec-title">${t('insp.vxlan.title')}</div>
+        <table class="insp-table">
+          <tr><th>VNI</th><td>${vx.vni}</td></tr>
+          <tr><th>${t('insp.vxlan.source')}</th><td>${esc(vx.sourceInterface)}</td></tr>
+          <tr><th>${t('insp.vxlan.localVtep')}</th><td>${esc(localVtep)}</td></tr>
+        </table>
+        <div class="insp-note">${t('insp.vxlan.note')}</div>
+      </div>`;
     }
 
     /* ---------- NAT (router) ---------- */

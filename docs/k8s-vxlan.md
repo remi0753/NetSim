@@ -1,7 +1,7 @@
 # VXLAN Kubernetes overlay topology
 
-`demo-vxlan.json` keeps the existing campus, redundancy, NAT, and Kubernetes
-lab topology. The Kubernetes Pod CIDRs are no longer advertised by OSPF.
+`demo-vxlan.json` keeps the existing campus, redundancy, and Kubernetes
+lab topology without NAT. The Kubernetes Pod CIDRs are no longer advertised by OSPF.
 Instead, every worker is a VXLAN tunnel endpoint (VTEP) on VLAN 151.
 
 ```mermaid
@@ -32,15 +32,15 @@ flowchart LR
   packet whose source and destination are the two VTEP addresses.
 - `L3SW3` and `L3SW4` are also VTEPs. They can encapsulate Service LB traffic
   to a selected Pod without installing Pod routes in the campus core.
-- Worker `Vlan2` is NAT inside and `Vlan151` is NAT outside. Traffic to
-  non-`10.0.0.0/8` destinations is source-NATed to the worker VTEP address.
-  Return traffic therefore reaches the worker without an external Pod route.
-- The NAT ACL deliberately excludes `10.0.0.0/8`, so Service-to-Pod traffic
-  keeps its Pod source address and the LB TCP proxy remains stateful.
+- Pod-to-Pod and Service-to-Pod traffic remains in the overlay. No worker is
+  configured with NAT/PAT or a NAT ACL.
+- As a result, this topology intentionally does not model Pod egress to
+  networks that lack a route back to `10.224.0.0/16`. Model that boundary on a
+  router or firewall when NAT is required.
 
 ## What this models and what it does not
 
-This models a static VXLAN control plane plus Node-local masquerade. In a
+This models a static VXLAN control plane without Node-local masquerade. In a
 production Kubernetes installation, the CNI normally programs the prefix-to-
 VTEP mappings and conntrack state automatically; EVPN, BGP, multicast, or a
 control-plane database can distribute that information. This simulator uses

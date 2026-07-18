@@ -59,6 +59,13 @@ section('デバイスポート数');
   ok(rMax.ports.length === 16, 'ルータの上限は16ポート');
   ok(swMax.ports.length === 52, 'スイッチの上限は52ポート');
   ok(l3Min.ports.length === 8, 'L3スイッチの下限は8ポート');
+  ok(!l3Min.stack.nat && l3Min.cliCaps().nat === false, 'L3スイッチではNAT/PATを提供しない');
+  const legacy = l3Min.serializeConfig();
+  legacy.nat = { statics: [{ localIp: '10.0.0.10', globalIp: '203.0.113.10' }], dynamic: [] };
+  legacy.svis = [{ vlanId: 10, ip: '10.0.0.1', maskLen: 24, natRole: 'inside' }];
+  l3Min.applyConfig(legacy);
+  const saved = l3Min.serializeConfig();
+  ok(!('nat' in saved) && !('natRole' in saved.svis[0]), '旧L3スイッチNAT設定は読み込み時に破棄する');
 }
 
 /* ---------- STP ---------- */
@@ -520,17 +527,13 @@ section('VXLAN: Pod CIDRをunderlayへ広告しない');
   const n2 = net.addDevice('l3switch', 0, 0, 'NODE2');
   const p1 = net.addDevice('pc', 0, 0, 'POD1');
   const p2 = net.addDevice('pc', 0, 0, 'POD2');
-  const edge = net.addDevice('router', 0, 0, 'EDGE');
-  const external = net.addDevice('pc', 0, 0, 'EXTERNAL');
   underlay.addVlan(100);
   underlay.cfg(underlay.getPort('Gi0/1')).accessVlan = 100;
   underlay.cfg(underlay.getPort('Gi0/2')).accessVlan = 100;
   net.connect(n1, 'Gi0/1', underlay, 'Gi0/1');
   net.connect(n2, 'Gi0/1', underlay, 'Gi0/2');
-  net.connect(n1, 'Gi0/3', edge, 'Gi0/0');
   net.connect(n1, 'Gi0/2', p1, 'eth0');
   net.connect(n2, 'Gi0/2', p2, 'eth0');
-  net.connect(edge, 'Gi0/1', external, 'eth0');
   const configureNode = (node, underlayIp, podGw, remoteNet, remoteVtep) => {
     node.addVlan(100); node.addVlan(10);
     node.cfg(node.getPort('Gi0/1')).accessVlan = 100;
@@ -541,19 +544,8 @@ section('VXLAN: Pod CIDRをunderlayへ広告しない');
   };
   configureNode(n1, '10.0.0.11', '10.244.1.1', '10.244.2.0', '10.0.0.12');
   configureNode(n2, '10.0.0.12', '10.244.2.1', '10.244.1.0', '10.0.0.11');
-  n1.cfg(n1.getPort('Gi0/3')).accessVlan = 100;
-  edge.getPort('Gi0/0').adminUp = true;
-  edge.getPort('Gi0/1').adminUp = true;
-  edge.stack.getIface('GigabitEthernet0/0').setIp('10.0.0.1', 24);
-  edge.stack.getIface('GigabitEthernet0/1').setIp('198.51.100.1', 24);
   p1.setIp('10.244.1.11', 24, '10.244.1.1');
   p2.setIp('10.244.2.11', 24, '10.244.2.1');
-  external.setIp('198.51.100.10', 24, '198.51.100.1');
-  n1.stack.getIface('Vlan10').natRole = 'inside';
-  n1.stack.getIface('Vlan100').natRole = 'outside';
-  n1.acls.set(100, [{ action: 'permit', proto: 'ip', src: { net: '10.244.1.0', wild: '0.0.0.255' }, dst: { any: true } }]);
-  n1.stack.nat.addDynamic(100, 'Vlan100', true);
-  n1.stack.staticRoutes.push({ network: '0.0.0.0', len: 0, nexthop: '10.0.0.1', type: 'S' });
   sim.advance(30000); // underlay STP convergence before sending test traffic
   const notes = [];
   sim.on('note', n => { if (n.kind === 'vxlan') notes.push(n); });
@@ -565,9 +557,7 @@ section('VXLAN: Pod CIDRをunderlayへ広告しない');
   n1.exec('show vxlan');
   ok(vxlanOutput.some(l => l.includes('VNI 42')) && vxlanOutput.some(l => l.includes('10.244.2.0/24')),
     'show vxlan にVNIとPodプレフィックスを表示');
-  const externalResult = pingSync(sim, p1, '198.51.100.10');
-  ok(externalResult.result === true && n1.stack.nat.entries.some(e => e.localIp === '10.244.1.11'),
-    'Node SNATにより外部ルータへPod CIDRを広告せず外部通信できる');
+  ok(!n1.stack.nat && !n2.stack.nat, 'L3スイッチはNAT/PAT機能を持たない');
   ok(!n1.stack.dynRoutes.has('ospf') && !n2.stack.dynRoutes.has('ospf'), 'Pod CIDRをOSPFで広告しない');
   const data = JSON.parse(JSON.stringify(net.serialize()));
   const sim2 = new NetSim.Simulator(), net2 = new NetSim.Network(sim2);
