@@ -185,7 +185,7 @@
           <li>interface vlan 10 → ip address … (L3スイッチ)</li>
           <li>ip route 0.0.0.0 0.0.0.0 10.0.0.1</li>
           <li>router ospf 1 → network 10.0.0.0 0.255.255.255 area 0</li>
-          <li>vrrp 1 ip 10.0.1.1 / channel-group 1 mode active</li>
+          <li>vrrp 1 ip 10.0.1.1 / channel-group 1 mode on</li>
           <li>show spanning-tree / spanning-tree vlan 1 priority 24576</li>
           <li>ip helper-address 10.0.2.9 (DHCPリレー)</li>
           <li>access-list 100 deny icmp any host 10.0.2.10</li>
@@ -215,7 +215,7 @@
           <li>interface vlan 10 → ip address … (L3 switch)</li>
           <li>ip route 0.0.0.0 0.0.0.0 10.0.0.1</li>
           <li>router ospf 1 → network 10.0.0.0 0.255.255.255 area 0</li>
-          <li>vrrp 1 ip 10.0.1.1 / channel-group 1 mode active</li>
+          <li>vrrp 1 ip 10.0.1.1 / channel-group 1 mode on</li>
           <li>show spanning-tree / spanning-tree vlan 1 priority 24576</li>
           <li>ip helper-address 10.0.2.9 (DHCP relay)</li>
           <li>access-list 100 deny icmp any host 10.0.2.10</li>
@@ -366,7 +366,7 @@
     'insp.vxlan.off':      { ja: '未設定', en: 'Not configured' },
     'insp.vxlan.source':   { ja: '送信元IF', en: 'Source interface' },
     'insp.vxlan.localVtep':{ ja: 'ローカルVTEP', en: 'Local VTEP' },
-    'insp.vxlan.note':     { ja: '設定はCLI: <code>vxlan vni 10100 source-interface Vlan151</code><br><code>vxlan peer 10.224.2.0 255.255.255.0 10.0.10.12</code><br>確認: <code>show vxlan</code>', en: 'Configure in the CLI: <code>vxlan vni 10100 source-interface Vlan151</code><br><code>vxlan peer 10.224.2.0 255.255.255.0 10.0.10.12</code><br>Check: <code>show vxlan</code>' },
+    'insp.vxlan.note':     { ja: '設定はCLI: <code>vxlan vni 10100 vlan 10 source-interface Vlan151</code><br><code>vxlan peer 10.0.10.12</code><br>inner Ethernet を UDP/4789 でカプセル化します。制御プレーンは静的VTEPリストです。', en: 'Configure in the CLI: <code>vxlan vni 10100 vlan 10 source-interface Vlan151</code><br><code>vxlan peer 10.0.10.12</code><br>Inner Ethernet is encapsulated in UDP/4789; the control plane is a static VTEP list.' },
     'insp.route.title':    { ja: 'スタティックルート', en: 'Static routes' },
     'insp.route.nhPh':     { ja: 'ネクストホップ', en: 'Next hop' },
     'insp.route.badNet':   { ja: '宛先は 10.0.2.0/24 の形式で', en: 'Destination must look like 10.0.2.0/24' },
@@ -401,8 +401,8 @@
     'cli.h.noNatStatic':   { ja: '静的NATを削除', en: 'Delete static NAT' },
     'cli.h.natDyn':        { ja: '動的PAT (ACL一致トラフィックを指定IFのアドレスへ過負荷変換)', en: 'Dynamic PAT (overload ACL-matched traffic onto an interface address)' },
     'cli.h.noNatDyn':      { ja: '動的PATを削除', en: 'Delete dynamic PAT' },
-    'cli.h.vxlanSource':   { ja: 'VXLAN VNIと送信元VTEPインターフェースを設定', en: 'Configure VXLAN VNI and source VTEP interface' },
-    'cli.h.vxlanPeer':     { ja: 'Podプレフィックスと宛先VTEPを追加', en: 'Add a Pod prefix to remote-VTEP mapping' },
+    'cli.h.vxlanSource':   { ja: 'VXLAN VNI・ローカルVLAN・送信元VTEPインターフェースを設定', en: 'Configure VXLAN VNI, local VLAN, and source VTEP interface' },
+    'cli.h.vxlanPeer':     { ja: 'リモートVTEPを追加（静的ingress replication）', en: 'Add a remote VTEP (static ingress replication)' },
     'cli.h.noVxlan':       { ja: 'VXLAN設定を削除', en: 'Remove VXLAN configuration' },
     'cli.h.routerOspf':    { ja: 'OSPFプロセスを開始', en: 'Start an OSPF process' },
     'cli.h.noRouterOspf':  { ja: 'OSPFプロセスを停止', en: 'Stop the OSPF process' },
@@ -430,7 +430,7 @@
     'cli.h.vrrpIp':        { ja: 'VRRP仮想IPを設定', en: 'Set the VRRP virtual IP' },
     'cli.h.vrrpPri':       { ja: 'VRRP優先度を設定 (デフォルト100)', en: 'Set VRRP priority (default 100)' },
     'cli.h.noVrrp':        { ja: 'VRRPを解除', en: 'Remove VRRP' },
-    'cli.h.channelGroup':  { ja: 'ポートチャネルに参加 (mode active|on)', en: 'Join a port channel (mode active|on)' },
+    'cli.h.channelGroup':  { ja: '静的ポートチャネルに参加 (mode on)', en: 'Join a static port channel (mode on)' },
     'cli.h.noChannelGroup':{ ja: 'ポートチャネルから離脱', en: 'Leave the port channel' },
     'cli.h.aclIn':         { ja: '受信方向ACLを適用', en: 'Apply an inbound ACL' },
     'cli.h.aclOut':        { ja: '送信方向ACLを適用', en: 'Apply an outbound ACL' },
@@ -456,13 +456,13 @@
     'cli.h.showIntStatus': { ja: 'ポート状態一覧', en: 'Interface status' },
     'cli.h.showAcls':      { ja: 'ACL一覧', en: 'List ACLs' },
     'cli.h.showNat':       { ja: 'NAT変換テーブル', en: 'NAT translation table' },
-    'cli.h.showVxlan':     { ja: 'VXLAN VTEPとPodプレフィックス対応を表示', en: 'Show VXLAN VTEP and Pod-prefix mappings' },
+    'cli.h.showVxlan':     { ja: 'VXLAN VNI・VLAN・VTEP一覧を表示', en: 'Show VXLAN VNI, VLAN, and VTEPs' },
 
     /* ---------- CLI runtime messages ---------- */
     'cli.m.invalidInput':  { ja: '% Invalid input detected: "{0}"  ("?" でヘルプ表示)', en: '% Invalid input detected: "{0}"  (type "?" for help)' },
     'cli.m.ambiguous':     { ja: '% Ambiguous command: 候補が複数あります ("?" で確認)', en: '% Ambiguous command: multiple matches (type "?" to check)' },
     'cli.m.natCleared':    { ja: '%NAT: 動的変換テーブルをクリアしました', en: '%NAT: cleared the dynamic translation table' },
-    'cli.m.vxlanBad':      { ja: '% VXLAN VNI は 1〜16777215、送信元は有効なL3インターフェースである必要があります', en: '% VXLAN VNI must be 1-16777215 and the source must be a valid L3 interface' },
+    'cli.m.vxlanBad':      { ja: '% VXLAN VNI は 1〜16777215、VLAN は 1〜4094、送信元は有効なL3インターフェースである必要があります', en: '% VXLAN VNI must be 1-16777215, VLAN 1-4094, and the source a valid L3 interface' },
     'cli.m.vxlanNeedSource': { ja: '% 先に vxlan vni ... source-interface ... を設定してください', en: '% Configure VXLAN VNI and source interface first' },
     'cli.m.sviNotFound':   { ja: '% SVI が見つかりません', en: '% SVI not found' },
     'cli.m.ipRoutingAlways':{ ja: '(このモデルでは常に有効です)', en: '(always enabled in this model)' },
@@ -476,6 +476,10 @@
     'cli.m.noIpOnIface':   { ja: '% このインターフェースにIPは設定できません', en: '% This interface cannot take an IP' },
     'cli.m.notL3':         { ja: '% L3インターフェースではありません', en: '% Not an L3 interface' },
     'cli.m.vrrpNeedIp':    { ja: '% 先に vrrp <グループ> ip <IP> を設定してください', en: '% Configure vrrp <group> ip <IP> first' },
+    'cli.m.vrrpGroupRange':{ ja: '% VRRPグループは 1〜255 で指定してください', en: '% VRRP group must be 1–255' },
+    'cli.m.vrrpPriRange':  { ja: '% VRRP priority は 1〜255 で指定してください', en: '% VRRP priority must be 1–255' },
+    'cli.m.ospfArea0Only': { ja: '% このモデルは OSPF area 0 のみ対応です', en: '% This model supports OSPF area 0 only' },
+    'cli.m.staticChannelOnly': { ja: '% このモデルのポートチャネルは静的 mode on のみ対応です', en: '% This model supports static port-channel mode on only' },
     'cli.m.notPhysPort':   { ja: '% 物理ポートではありません', en: '% Not a physical port' },
     'cli.m.setAllPorts':   { ja: '%LINK: {0}個のインターフェースを {1} にしました', en: '%LINK: set {0} interfaces to {1}' },
     'cli.m.sviCreated':    { ja: '%SVI Vlan{0} を作成しました', en: '%SVI Vlan{0} created' },
@@ -601,6 +605,7 @@
     'lb.m.statusLine':   { ja: 'サービス: {0}  方式: round-robin', en: 'Service: {0}  method: round-robin' },
     'lb.m.noBackends':   { ja: 'バックエンドなし — "lb backend add <IP> [port]" で追加', en: 'No backends — add with "lb backend add <IP> [port]"' },
     'lb.m.lbUsage':      { ja: '使い方: lb service <port> / lb backend add|del <IP> [port] / lb status', en: 'Usage: lb service <port> / lb backend add|del <IP> [port] / lb status' },
+    'lb.m.portRange':    { ja: '% ポートは 1〜65535 で指定してください', en: '% Port must be 1–65535' },
     'lb.m.noAliveBackend':{ ja: '[lb] {0} — 稼働中のバックエンドがありません', en: '[lb] {0} — no healthy backends' },
     'lb.n.backendUp':    { ja: '{0}: バックエンド {1}:{2} が復旧', en: '{0}: backend {1}:{2} recovered' },
     'lb.n.backendDown':  { ja: '{0}: バックエンド {1}:{2} がダウン', en: '{0}: backend {1}:{2} down' },

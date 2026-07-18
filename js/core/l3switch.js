@@ -9,6 +9,7 @@
       this.stack = new NetSim.NetworkStack(this, { forwarding: true });
       this.svis = new Map();   // vlanId -> L3Interface
       this.acls = new Map();
+      this.vxlanMacTable = new Map(); // "vni|mac" -> remote VTEP IP
       this.stack.aclCheck = (dir, iface, pkt) => {
         const num = dir === 'in' ? iface.aclIn : iface.aclOut;
         if (num == null) return true;
@@ -64,6 +65,7 @@
         const member = this._resolveEgressPort(p, frame);
         if (member) this.egress(member, vlanId, frame);
       }
+      this._vxlanEncapsulate(vlanId, frame);
     }
 
     cpuOwnsMac(mac) { return mac === this.baseMac; }
@@ -77,6 +79,51 @@
       this.stack.onFrame(iface, frame);
     }
 
+    receiveFrame(port, frame) {
+      if (!port.isUp()) return;
+      const vlan = this.ingressVlan(port, frame);
+      if (vlan == null || !this.isStpForwarding(port, vlan)) return;
+      this.learn(vlan, frame.src, port);
+      this.l2Forward(port, vlan, frame);
+      this.deliverToCpu(port, vlan, frame);
+      this._vxlanEncapsulate(vlan, frame);
+    }
+    _vxlanEncapsulate(vlan, frame) {
+      const vx = this.stack.vxlan;
+      if (!vx || vx.vlanId !== vlan) return;
+      if (this.cpuOwnsMac(frame.dst)) return;
+      const remote = frame.dst === BC ? null : this.vxlanMacTable.get(`${vx.vni}|${frame.dst}`);
+      if (!remote && frame.dst !== BC && this.lookup(vlan, frame.dst)) return; // locally attached
+      const peers = remote ? [remote] : vx.peers.map(p => p.vtep);
+      const inner = NetSim.clone(frame);
+      inner.vlan = null; // VLAN is represented by the VNI at the VTEP boundary
+      const source = this.stack.getIface(vx.sourceInterface);
+      for (const vtep of peers) if (!source || source.ip !== vtep) this.stack.sendVxlan(vtep, inner);
+    }
+    receiveVxlanFrame(vni, frame, remoteVtep) {
+      const vx = this.stack.vxlan;
+      if (!vx || vx.vni !== vni || !frame || frame.l2 !== 'eth') return;
+      const vlan = vx.vlanId;
+      this.vxlanMacTable.set(`${vni}|${frame.src}`, remoteVtep);
+      if (!this.cpuOwnsMac(frame.dst)) {
+        const outPort = this.lookup(vlan, frame.dst);
+        if (outPort) {
+          const member = this._resolveEgressPort(outPort, frame);
+          if (member) this.egress(member, vlan, frame);
+        } else {
+          const seen = new Set();
+          for (const p of this.ports) {
+            const key = this.logicalKey(p);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const member = this._resolveEgressPort(p, frame);
+            if (member) this.egress(member, vlan, frame);
+          }
+        }
+      }
+      this.deliverToCpu(null, vlan, frame);
+    }
+
     serializeConfig() {
       const cfg = super.serializeConfig();
       cfg.svis = [...this.svis].map(([vlanId, iface]) => ({
@@ -88,8 +135,9 @@
       cfg.acls = [...this.acls].map(([num, rules]) => ({ num, rules }));
       cfg.vxlan = this.stack.vxlan ? {
         vni: this.stack.vxlan.vni,
+        vlanId: this.stack.vxlan.vlanId,
         sourceInterface: this.stack.vxlan.sourceInterface,
-        peers: this.stack.vxlan.peers.map(p => ({ network: p.network, len: p.len, vtep: p.vtep })),
+        peers: this.stack.vxlan.peers.map(p => ({ vtep: p.vtep })),
       } : null;
       cfg.ospf = this.ospf.serialize();
       return cfg;
@@ -108,7 +156,7 @@
       }
       for (const r of cfg.routes || []) this.stack.addStaticRoute(r.network, r.len, r.nexthop);
       for (const a of cfg.acls || []) this.acls.set(a.num, a.rules);
-      if (cfg.vxlan) this.stack.configureVxlan(cfg.vxlan.vni, cfg.vxlan.sourceInterface, cfg.vxlan.peers);
+      if (cfg.vxlan && cfg.vxlan.vlanId != null) this.stack.configureVxlan(cfg.vxlan.vni, cfg.vxlan.vlanId, cfg.vxlan.sourceInterface, cfg.vxlan.peers);
       if (cfg.ospf) this.ospf.applyConfig(cfg.ospf);
     }
   }

@@ -332,13 +332,14 @@
       const b = this.body;
       b.querySelector('#lb-start').addEventListener('click', () => {
         const port = Number(b.querySelector('#lb-port').value) || 80;
+        if (!NetSim.isValidPort(port)) return;
         dev.lbEnable(port);
         this.render(this.sel);
       });
       b.querySelector('#lb-bk-add').addEventListener('click', () => {
         const ip = b.querySelector('#lb-bk-ip').value.trim();
         const port = Number(b.querySelector('#lb-bk-port').value) || 80;
-        if (!IP.isValid(ip)) return;
+        if (!IP.isValid(ip) || !NetSim.isValidPort(port)) return;
         dev.addBackend(ip, port);
         this.render(this.sel);
       });
@@ -608,6 +609,7 @@
         <div class="sec-title">${t('insp.vxlan.title')}</div>
         <table class="insp-table">
           <tr><th>VNI</th><td>${vx.vni}</td></tr>
+          <tr><th>VLAN</th><td>${vx.vlanId}</td></tr>
           <tr><th>${t('insp.vxlan.source')}</th><td>${esc(vx.sourceInterface)}</td></tr>
           <tr><th>${t('insp.vxlan.localVtep')}</th><td>${esc(localVtep)}</td></tr>
         </table>

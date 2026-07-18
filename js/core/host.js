@@ -284,7 +284,7 @@
           if (argv[1] === 'get') {
             const dst = argv[2];
             const port = Number(argv[3]) || 80;
-            if (!dst || !IP.isValid(dst)) { this.out(t('host.m.httpGetUsage')); return; }
+            if (!dst || !IP.isValid(dst) || !NetSim.isValidPort(port)) { this.out(t('host.m.httpGetUsage')); return; }
             if (!this.iface.ip) { this.out(t('host.m.noIp')); return; }
             this.busy = true;
             this.out(`Connecting to ${dst}:${port} ...`);
@@ -313,7 +313,7 @@
           if (argv[1] === 'send') {
             const dst = argv[2], port = Number(argv[3]);
             const msg = argv.slice(4).join(' ') || 'hello';
-            if (!IP.isValid(dst) || !port) { this.out(t('host.m.udpSendUsage')); return; }
+            if (!IP.isValid(dst) || !NetSim.isValidPort(port)) { this.out(t('host.m.udpSendUsage')); return; }
             if (!this.iface.ip) { this.out(t('host.m.noIp')); return; }
             this.stack.sendUdp(dst, port, 40000 + Math.floor(Math.random() * 10000), msg, {
               onNoRoute: () => this.out(t('host.m.noRoute')),
@@ -323,7 +323,7 @@
           }
           if (argv[1] === 'listen') {
             const port = Number(argv[2]);
-            if (!port) { this.out(t('host.m.udpListenUsage')); return; }
+            if (!NetSim.isValidPort(port)) { this.out(t('host.m.udpListenUsage')); return; }
             this.stack.udpListen(port, (src, sport, data) => {
               this.out(t('host.m.udpRecv', port, src, sport, data));
             });

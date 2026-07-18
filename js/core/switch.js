@@ -81,7 +81,7 @@
       return true;
     }
 
-    /* ---- port-channel (LACP, simplified static bundling) ---- */
+    /* ---- static port-channel (no LACP negotiation is simulated) ---- */
     channelMembers(n) {
       return this.ports.filter(p => this.cfg(p).channel === n);
     }

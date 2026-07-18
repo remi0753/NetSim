@@ -82,6 +82,9 @@
   function inNetwork(ip, net, len) {
     return networkOf(ip, len) === networkOf(net, len);
   }
+  function isValidPort(port) {
+    return Number.isInteger(Number(port)) && Number(port) >= 1 && Number(port) <= 65535;
+  }
 
   /* ---- deep clone for plain-data frames (structuredClone is ~5x faster).
    * Called through a wrapper: a detached reference to structuredClone throws
@@ -90,7 +93,7 @@
     ? function (obj) { return structuredClone(obj); }
     : function (obj) { return JSON.parse(JSON.stringify(obj)); };
 
-  /* ---- FNV-1a string hash (flow hashing for ECMP / LACP) ---- */
+  /* ---- FNV-1a string hash (flow hashing for ECMP / port channels) ---- */
   function hashStr(s) {
     let h = 2166136261;
     for (let i = 0; i < s.length; i++) {
@@ -113,6 +116,7 @@
     toInt: ipToInt, fromInt: intToIp, isValid: isValidIp,
     maskToLen, lenToMask, networkOf, broadcastOf, sameSubnet, inNetwork,
   };
+  NetSim.isValidPort = isValidPort;
   NetSim.clone = clone;
   NetSim.hashStr = hashStr;
   NetSim.fmtTime = fmtTime;

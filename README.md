@@ -24,15 +24,15 @@ python3 -m http.server   # → http://localhost:8000
 | Layer | What's implemented |
 |---|---|
 | **L1 Physical** | Cabling, link up/down, `shutdown` / `no shutdown`, repeater hubs |
-| **L2 Data Link** | Ethernet frames, MAC address learning & aging, flooding, 802.1Q VLANs (access/trunk/native VLAN), **STP (root/designated/alternate port selection)**, **LACP port channels (flow-hash distribution)**, broadcast-storm detection via hop limit |
-| **L3 Network** | ARP, IPv4 routing (longest-prefix match + administrative distance), static routes, **OSPF-style dynamic routing (Hello / LSA flooding / SPF)**, **ECMP (flow-hash distribution over equal-cost paths)**, TTL decrement, ICMP, inter-VLAN routing via SVIs, **VRRP (virtual IP / virtual MAC / preempt)**, **DHCP (client / server / `ip helper-address` relay)**, router-only **NAT/PAT (inside/outside interfaces, static NAT, interface overload = PAT, proxy-ARP for static publishing)**, **VXLAN (VTEP-to-VTEP Pod-prefix encapsulation)** |
+| **L2 Data Link** | Ethernet frames, MAC address learning & aging, flooding, 802.1Q VLANs (access/trunk/native VLAN), **STP (root/designated/alternate port selection)**, **static port channels (flow-hash distribution)**, loop safety guard |
+| **L3 Network** | ARP, IPv4 routing (longest-prefix match + administrative distance), static routes, **OSPF-style dynamic routing (Hello / LSA flooding / SPF)**, **ECMP (flow-hash distribution over equal-cost paths)**, TTL decrement, ICMP, inter-VLAN routing via SVIs, **VRRP (virtual IP / virtual MAC / preempt)**, **DHCP (client / server / `ip helper-address` relay)**, router-only **NAT/PAT (inside/outside interfaces, static NAT, interface overload = PAT, proxy-ARP for static publishing)**, **VXLAN (inner Ethernet over UDP/4789, static VTEP peers)** |
 | **L4 Transport** | TCP (three-way handshake, FIN/RST), UDP, a simple HTTP server/client, extended ACLs, **L4 load balancer (round-robin + health checks)** |
 
 ### Devices
 
 - **PC / Server** — Static IP or DHCP. Commands like `ping`, `traceroute`, `arp`, `http get`, `udp send`. Any host can become a DHCP server via the `dhcp pool` command
 - **Hub** — Simple repeat-to-all-ports (L1)
-- **L2 switch** — VLANs, MAC table, `channel-group` (LACP)
+- **L2 switch** — VLANs, MAC table, static `channel-group`
 - **L3 switch** — L2 features + SVI + static/OSPF routing + ACLs + VRRP + VXLAN (NAT/PATなし)
 - **Router** — Static/OSPF, ACLs, VRRP, DHCP relay, **NAT/PAT** (interfaces start in shutdown state on a new device)
 - **LB** — L4 load balancer. TCP proxy to backends + health checks
@@ -97,7 +97,7 @@ RT1# clear ip nat translation *
 
 ```
 SW1(config)# interface Gi0/1
-SW1(config-if)# channel-group 1 mode active   ← LACP (bundle two links into one logical link)
+SW1(config-if)# channel-group 1 mode on       ← static bundle (two links into one logical link)
 SW1(config-if)# switchport mode trunk
 SW1# show etherchannel summary
 SW1# show mac address-table                   ← the channel appears as Po1
@@ -141,12 +141,12 @@ show vrrp brief
 - `shutdown` one spine → OSPF reconverges and connectivity survives via the remaining paths
 - In sample 3, take down RT1 → VRRP failover (you can also see the gratuitous ARP flow)
 - `http server off` on an LB backend → the health check detects it as DOWN and removes it from distribution
-- Connect two switches with two links → loop-detection warning → resolve it by bundling with `channel-group` (LACP)
+- Connect two switches with two links → loop-detection warning → resolve it by bundling with `channel-group` (static port-channel)
 
 ## Tests
 
 ```bash
-node tests/run.js       # 102 core-engine tests (L1–L4 / OSPF / ECMP / DHCP / VRRP / LACP / LB / NAT / performance)
+node tests/run.js       # core-engine tests (L1–L4 / OSPF / ECMP / DHCP / VRRP / VXLAN / LB / NAT / performance)
 node tests/browser.js   # 28 UI tests on headless Chrome (requires: npm i puppeteer-core)
 ```
 
@@ -173,9 +173,10 @@ tests/                Node tests and browser tests
 ## Known Simplifications
 
 - OSPF is area 0 only, with no DR election (SPF treats subnets as pseudo-nodes). The real-device configuration model is preserved
-- LACP is a static bundle that omits the negotiation (LACPDU)
+- Port channels are static (`channel-group <n> mode on`); LACP negotiation/LACPDU is not implemented
 - STP defaults to a Rapid PVST+ equivalent (one tree per VLAN); `spanning-tree mode rstp` selects a common tree. Both converge immediately after a topology change and omit BPDU timing, listening/learning timer states, and MSTP
 - TCP is a simplified implementation with no retransmission or window control
 - NAT is "inside source" direction only (static NAT + interface overload = PAT). Dynamic NAT pools, `outside source`, and per-port static NAT are not implemented
 - IPv6 / BGP are not implemented
 - Link latency is a uniform 450ms (simulation time) so you can follow packets by eye. The speed slider goes up to 64x
+- `shutdown all` / `no shutdown all` are simulator-only convenience commands for fault injection, not IOS commands

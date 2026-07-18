@@ -44,8 +44,8 @@ ok(NetSim.ip.sameSubnet('10.0.1.1', '10.0.1.200', 24), 'sameSubnet true');
 ok(!NetSim.ip.sameSubnet('10.0.1.1', '10.0.2.1', 24), 'sameSubnet false');
 ok(NetSim.ip.maskToLen('255.0.255.0') === null, 'non-contiguous mask rejected');
 ok(NetSim.decode.protoKey(NetSim.pdu.eth('aa', 'bb', 'ipv4',
-  NetSim.pdu.ipv4('10.0.0.1', '10.0.0.2', 'vxlan', { vni: 10100 }))) === 'vxlan',
-  'VXLANパケットが専用の色分類になる');
+  NetSim.pdu.ipv4('10.0.0.1', '10.0.0.2', 'udp', NetSim.pdu.udp(50000, 4789, { vxlan: true, vni: 10100 })))) === 'vxlan',
+  'UDP/4789 VXLANパケットが専用の色分類になる');
 
 /* ---------- device sizing ---------- */
 section('デバイスポート数');
@@ -357,6 +357,41 @@ section('CLI (IOS風)');
   ok(pcOut.some(l => l.includes('administratively down')) && pcOut.some(l => l.includes('up')), 'Host CLIのshutdown/no shutdownが結果を表示');
 }
 
+/* ---------- protocol/input validity ---------- */
+section('実機範囲の入力検証');
+{
+  const { sim, net } = fresh();
+  const rt = net.addDevice('router', 0, 0);
+  const sw = net.addDevice('switch', 0, 0);
+  const pc = net.addDevice('pc', 0, 0);
+  const lb = net.addDevice('lb', 0, 0);
+  const p = rt.getPort('Gi0/0'); p.adminUp = true; p.l3iface.setIp('10.0.0.1', 24);
+  net.connect(rt, 'Gi0/0', sw, 'Gi0/4');
+  const out = capture(rt);
+  for (const c of ['enable', 'conf t', 'interface Gi0/0', 'vrrp 256 ip 10.0.0.254',
+    'vrrp 1 ip 10.0.0.254', 'vrrp 1 priority 256', 'end', 'conf t', 'router ospf 1',
+    'network 10.0.0.0 0.0.0.255 area 1', 'end']) rt.exec(c);
+  ok(!p.l3iface.vrrp || p.l3iface.vrrp.gid !== 256, 'VRRPグループ 256 を拒否');
+  ok(p.l3iface.vrrp && p.l3iface.vrrp.priority === 100, 'VRRP priority 256 を拒否');
+  ok(out.some(l => l.includes('area 0')), 'OSPF area 0 以外を拒否');
+  p.l3iface.vrrp = null;
+  ok(rt.stack.configureVrrp(p.l3iface, 1, '10.0.0.254', 100), '有効なVRRPを設定');
+  rt.stack._sendVrrpAdvert(p.l3iface);
+  const vrrpTx = sim.transmissions.find(tx => tx.frame.payload && tx.frame.payload.proto === 'vrrp');
+  ok(vrrpTx && vrrpTx.frame.payload.ttl === 255, 'VRRP Advertisement のTTLは255');
+
+  const swOut = capture(sw);
+  for (const c of ['enable', 'conf t', 'interface Gi0/1', 'channel-group 1 mode active', 'end']) sw.exec(c);
+  ok(sw.cfg(sw.getPort('Gi0/1')).channel == null, 'LACP active を受理せず静的チャネルだけを提供');
+
+  const pcOut = capture(pc);
+  pc.exec('udp listen 65536');
+  ok(!pc._udpListenPorts.has(65536) && pcOut.length > 0, 'UDPポート65536を拒否');
+  const lbOut = capture(lb);
+  lb.exec('lb service 70000');
+  ok(lb.lbPort == null && lbOut.some(l => l.includes('65535')), 'LBポート70000を拒否');
+}
+
 /* ---------- save / load ---------- */
 section('保存 / 読み込み');
 {
@@ -519,7 +554,7 @@ section('OSPF: ECMP (スパイン・リーフ)');
 }
 
 /* ---------- VXLAN ---------- */
-section('VXLAN: Pod CIDRをunderlayへ広告しない');
+section('VXLAN: Ethernet-over-UDP/4789 overlay');
 {
   const { sim, net } = fresh();
   const underlay = net.addDevice('switch', 0, 0, 'UNDERLAY');
@@ -534,31 +569,30 @@ section('VXLAN: Pod CIDRをunderlayへ広告しない');
   net.connect(n2, 'Gi0/1', underlay, 'Gi0/2');
   net.connect(n1, 'Gi0/2', p1, 'eth0');
   net.connect(n2, 'Gi0/2', p2, 'eth0');
-  const configureNode = (node, underlayIp, podGw, remoteNet, remoteVtep) => {
+  const configureNode = (node, underlayIp, remoteVtep) => {
     node.addVlan(100); node.addVlan(10);
     node.cfg(node.getPort('Gi0/1')).accessVlan = 100;
     node.cfg(node.getPort('Gi0/2')).accessVlan = 10;
     node.createSvi(100).setIp(underlayIp, 24);
-    node.createSvi(10).setIp(podGw, 24);
-    node.stack.configureVxlan(42, 'Vlan100', [{ network: remoteNet, len: 24, vtep: remoteVtep }]);
+    node.stack.configureVxlan(42, 10, 'Vlan100', [{ vtep: remoteVtep }]);
   };
-  configureNode(n1, '10.0.0.11', '10.244.1.1', '10.244.2.0', '10.0.0.12');
-  configureNode(n2, '10.0.0.12', '10.244.2.1', '10.244.1.0', '10.0.0.11');
-  p1.setIp('10.244.1.11', 24, '10.244.1.1');
-  p2.setIp('10.244.2.11', 24, '10.244.2.1');
+  configureNode(n1, '10.0.0.11', '10.0.0.12');
+  configureNode(n2, '10.0.0.12', '10.0.0.11');
+  p1.setIp('10.244.10.11', 24, null);
+  p2.setIp('10.244.10.12', 24, null);
   sim.advance(30000); // underlay STP convergence before sending test traffic
   const notes = [];
   sim.on('note', n => { if (n.kind === 'vxlan') notes.push(n); });
-  const r = pingSync(sim, p1, '10.244.2.11');
-  ok(r.result === true, 'VXLANで別NodeのPodへ ping 成功');
-  ok(notes.some(n => n.msg.includes('VNI 42')) && notes.some(n => n.msg.includes('decapsulated')),
-    'VTEPでカプセル化・終端された');
+  const r = pingSync(sim, p1, '10.244.10.12');
+  ok(r.result === true, '同一VNIの別VTEP配下ホストへ ping 成功');
+  ok(notes.some(n => n.msg.includes('UDP/4789 VNI 42')) && notes.some(n => n.msg.includes('decapsulated UDP/4789')),
+    'inner Ethernet frame が UDP/4789 VXLAN でカプセル化・終端された');
   const vxlanOutput = capture(n1);
   n1.exec('show vxlan');
-  ok(vxlanOutput.some(l => l.includes('VNI 42')) && vxlanOutput.some(l => l.includes('10.244.2.0/24')),
-    'show vxlan にVNIとPodプレフィックスを表示');
+  ok(vxlanOutput.some(l => l.includes('VNI 42')) && vxlanOutput.some(l => l.includes('VLAN 10')) && vxlanOutput.some(l => l.includes('10.0.0.12')),
+    'show vxlan にVNI・VLAN・リモートVTEPを表示');
   ok(!n1.stack.nat && !n2.stack.nat, 'L3スイッチはNAT/PAT機能を持たない');
-  ok(!n1.stack.dynRoutes.has('ospf') && !n2.stack.dynRoutes.has('ospf'), 'Pod CIDRをOSPFで広告しない');
+  ok(!n1.stack.dynRoutes.has('ospf') && !n2.stack.dynRoutes.has('ospf'), 'VXLAN overlay は underlay OSPF の経路広告を必要としない');
   const data = JSON.parse(JSON.stringify(net.serialize()));
   const sim2 = new NetSim.Simulator(), net2 = new NetSim.Network(sim2);
   net2.load(data);
@@ -577,8 +611,8 @@ section('LACP: ポートチャネル');
   net.connect(pc2, 'eth0', sw2, 'Gi0/3');
   // チャネル未設定ならループ検知が出るはず → チャネル化でループなし
   for (const sw of [sw1, sw2]) {
-    for (const c of ['enable', 'conf t', 'interface Gi0/1', 'channel-group 1 mode active',
-      'exit', 'interface Gi0/2', 'channel-group 1 mode active', 'end']) sw.exec(c);
+    for (const c of ['enable', 'conf t', 'interface Gi0/1', 'channel-group 1 mode on',
+      'exit', 'interface Gi0/2', 'channel-group 1 mode on', 'end']) sw.exec(c);
   }
   pc1.setIp('192.168.1.1', 24, null);
   pc2.setIp('192.168.1.2', 24, null);

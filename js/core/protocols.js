@@ -77,6 +77,9 @@
             inner = `DHCP ${String(l4.data.op).toUpperCase()}` +
               (l4.data.yiaddr ? ` (${l4.data.yiaddr})` : '') +
               (l4.data.giaddr ? ` via relay ${l4.data.giaddr}` : '');
+          } else if (l4.dstPort === 4789 && l4.data && l4.data.vxlan) {
+            const inr = l4.data.inner || {};
+            inner = `VXLAN UDP/4789 VNI=${l4.data.vni} inner ${inr.src || '?'} → ${inr.dst || '?'}`;
           } else {
             inner = `UDP ${l4.srcPort}→${l4.dstPort} len=${String(l4.data == null ? '' : l4.data).length}`;
           }
@@ -88,9 +91,6 @@
           break;
         case 'vrrp':
           inner = `VRRP Advertisement grp=${l4.gid} prio=${l4.priority} vip=${l4.vip}`;
-          break;
-        case 'vxlan':
-          inner = `VXLAN VNI=${l4.vni} inner ${l4.inner && l4.inner.src} → ${l4.inner && l4.inner.dst}`;
           break;
         default:
           inner = ip.proto;
@@ -108,8 +108,8 @@
       const proto = frame.payload.proto;
       if (proto === 'icmp') return 'icmp';
       if (proto === 'tcp') return 'tcp';
+      if (proto === 'udp' && frame.payload.payload.dstPort === 4789 && frame.payload.payload.data && frame.payload.payload.data.vxlan) return 'vxlan';
       if (proto === 'udp') return 'udp';
-      if (proto === 'vxlan') return 'vxlan';
       if (proto === 'ospf' || proto === 'vrrp') return 'ctrl';
     }
     return 'other';
@@ -172,6 +172,13 @@
         if (d.serverId) df['Server ID'] = d.serverId;
         if (d.giaddr) df['Relay (giaddr)'] = d.giaddr;
         layers.push({ title: 'DHCP', fields: df });
+      } else if (l4.dstPort === 4789 && l4.data && l4.data.vxlan) {
+        layers.push({ title: 'UDP', fields: uf });
+        const d = l4.data, inner = d.inner || {};
+        layers.push({ title: 'VXLAN', fields: {
+          'Flags': 'I (0x08)', 'VNI': String(d.vni),
+          'Inner Ethernet': `${inner.src || '?'} → ${inner.dst || '?'} (${inner.type || '?'})`,
+        }});
       } else {
         uf['Data'] = l4.data != null ? JSON.stringify(String(l4.data).slice(0, 120)) : '(none)';
         layers.push({ title: 'UDP', fields: uf });

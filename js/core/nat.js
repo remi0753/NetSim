@@ -75,10 +75,10 @@
     _pickPort(proto, globalIp, preferred) {
       const used = new Set(this.entries.filter(e => e.proto === proto &&
         e.globalIp === globalIp && e.globalPort != null).map(e => e.globalPort));
-      if (preferred != null && preferred >= PAT_PORT_BASE && !used.has(preferred)) return preferred;
+      if (preferred != null && preferred >= PAT_PORT_BASE && preferred <= 65535 && !used.has(preferred)) return preferred;
       let p = PAT_PORT_BASE;
-      while (used.has(p)) p++;
-      return p;
+      while (used.has(p) && p <= 65535) p++;
+      return p <= 65535 ? p : null;
     }
 
     /* ---------------- inside -> outside (rewrite source) ---------------- */
@@ -94,6 +94,7 @@
         if (!globalIp) continue;
         const localPort = this._port(pkt, 'src');
         const e = this._allocate(pkt.proto, src, localPort, globalIp);
+        if (!e) { this.stack.sim.note('nat', `${this.stack.hostname()}: PAT port space exhausted`); return; }
         e.outIp = pkt.dst; e.outPort = this._port(pkt, 'dst'); e.ts = this.stack.sim.time;
         pkt.src = globalIp;
         this._setPort(pkt, 'src', e.globalPort);
@@ -105,6 +106,7 @@
         x.localIp === localIp && x.localPort === localPort && x.globalIp === globalIp);
       if (e) return e;
       const globalPort = localPort == null ? null : this._pickPort(proto, globalIp, localPort);
+      if (localPort != null && globalPort == null) return null;
       e = { proto, localIp, localPort, globalIp, globalPort, outIp: null, outPort: null, ts: this.stack.sim.time };
       this.entries.push(e);
       const l = localPort != null ? `${localIp}:${localPort}` : localIp;

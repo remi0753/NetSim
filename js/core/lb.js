@@ -16,11 +16,13 @@
     }
 
     lbEnable(port) {
+      if (!NetSim.isValidPort(port)) return false;
       if (this.lbPort != null) this.stack.tcpUnlisten(this.lbPort);
       this.lbPort = port;
       this.stack.tcpListen(port, (conn) => this._accept(conn));
       this._startHealth();
       this.changed();
+      return true;
     }
     lbDisable() {
       if (this.lbPort != null) this.stack.tcpUnlisten(this.lbPort);
@@ -28,10 +30,13 @@
       this.changed();
     }
     addBackend(ip, port) {
-      if (this.backends.some(b => b.ip === ip && b.port === port)) return;
-      this.backends.push({ ip, port: port || 80, alive: true, conns: 0 });
+      const actualPort = port == null ? 80 : port;
+      if (!NetSim.ip.isValid(ip) || !NetSim.isValidPort(actualPort)) return false;
+      if (this.backends.some(b => b.ip === ip && b.port === actualPort)) return false;
+      this.backends.push({ ip, port: actualPort, alive: true, conns: 0 });
       this._startHealth();
       this.changed();
+      return true;
     }
     removeBackend(ip) {
       this.backends = this.backends.filter(b => b.ip !== ip);
@@ -124,7 +129,7 @@
       if (cmd === 'vrrp') {
         const gid = Number(argv[1]);
         const sub = (argv[2] || '').toLowerCase();
-        if (!gid) { this.out(t('lb.m.vrrpUsage')); return; }
+        if (!Number.isInteger(gid) || gid < 1 || gid > 255) { this.out(t('cli.m.vrrpGroupRange')); return; }
         if (sub === 'ip' && NetSim.ip.isValid(argv[3])) {
           this.configureVrrp(gid, argv[3]);
           this.out(t('lb.m.vrrpSet', gid, argv[3]));
@@ -155,14 +160,17 @@
       if (argv[0] && argv[0].toLowerCase() === 'lb') {
         const sub = (argv[1] || '').toLowerCase();
         if (sub === 'service') {
-          const port = Number(argv[2]) || 80;
+          const port = argv[2] == null ? 80 : Number(argv[2]);
+          if (!NetSim.isValidPort(port)) { this.out(t('lb.m.portRange')); return; }
           this.lbEnable(port);
           this.out(t('lb.m.lbStarted', port));
           return;
         }
         if (sub === 'backend' && argv[2] === 'add' && NetSim.ip.isValid(argv[3])) {
-          this.addBackend(argv[3], Number(argv[4]) || 80);
-          this.out(t('lb.m.backendAdded', argv[3], Number(argv[4]) || 80));
+          const port = argv[4] == null ? 80 : Number(argv[4]);
+          if (!NetSim.isValidPort(port)) { this.out(t('lb.m.portRange')); return; }
+          this.addBackend(argv[3], port);
+          this.out(t('lb.m.backendAdded', argv[3], port));
           return;
         }
         if (sub === 'backend' && (argv[2] === 'del' || argv[2] === 'remove') && NetSim.ip.isValid(argv[3])) {

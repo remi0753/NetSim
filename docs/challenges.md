@@ -94,10 +94,10 @@
 - **手順のヒント**: スイッチ2台を **2本**のケーブルで接続。ブロードキャスト（ARP等）を発生させる
 - **✅ 達成条件**: ループ検知の警告（ホップ上限）を確認。次の課題1-4で解消する
 
-### 課題 1-4: LACP ポートチャネルで束ねる
+### 課題 1-4: 静的ポートチャネルで束ねる
 - **ねらい**: 冗長リンクを1本の論理リンクに束ね、帯域向上とループ回避
-- **使う機能**: `channel-group <n> mode active`、`show etherchannel summary`
-- **手順のヒント**: 課題1-3の2本のリンク両端で、各インターフェースに `channel-group 1 mode active`。`show etherchannel summary` で `Po1` を確認
+- **使う機能**: `channel-group <n> mode on`、`show etherchannel summary`
+- **手順のヒント**: 課題1-3の2本のリンク両端で、各インターフェースに `channel-group 1 mode on`。`show etherchannel summary` で `Po1` を確認
 - **✅ 達成条件**: ループ警告が消え、`show mac address-table` でポートが `Po1` 表示になる。複数フローで両リンクに分散されることをログで確認
 
 ### 課題 1-5: VLAN で分割する（同居しつつ隔離）
@@ -334,7 +334,7 @@
 
 ```
 Lv.0（物理とping）
-   └─▶ Lv.1（L2: スイッチ→VLAN→トランク→LACP）
+   └─▶ Lv.1（L2: スイッチ→VLAN→トランク→静的ポートチャネル）
           └─▶ Lv.2（L3: ルータ→スタティック→SVI→DHCP）
                  └─▶ Lv.3（OSPF→ECMP→VRRP）
                         └─▶ Lv.4（TCP/UDP→ACL→LB）
@@ -366,13 +366,13 @@ vrrp <n> ip <vip> / vrrp <n> priority <prio>      # LBのサービスVIP冗長
 **スイッチ / ルータ（Cisco IOS 風・省略形と `?` 対応）**
 ```
 enable / configure terminal
-shutdown all / no shutdown all                # デバイス全IF停止 / 復旧
+shutdown all / no shutdown all                # シミュレーター専用: デバイス全IF停止 / 復旧
 interface Gi0/0
  ip address <ip> <mask> / no shutdown / shutdown
  switchport mode access|trunk
  switchport access vlan <n>
  switchport trunk allowed vlan all|10,20 / native vlan <n>
- channel-group <n> mode active|on          # LACP
+ channel-group <n> mode on                 # 静的ポートチャネル
  ip helper-address <ip>                     # DHCPリレー
  vrrp <n> ip <vip> / vrrp <n> priority <n>  # GW冗長
  ip ospf cost <n>

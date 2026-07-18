@@ -8,7 +8,7 @@
 
   /* timeouts sized for the visual link delay (450ms/hop): a 4-link RTT is ~3.6s */
   const ARP_TIMEOUT = 3000, ARP_RETRIES = 2, ARP_AGE = 240000;
-  const PING_TIMEOUT = 8000, TCP_SYN_TIMEOUT = 8000, TCP_SYN_RETRIES = 2;
+  const PING_TIMEOUT = 20000, TCP_SYN_TIMEOUT = 8000, TCP_SYN_RETRIES = 2;
 
   class L3Interface {
     constructor(stack, name, mac, hooks) {
@@ -52,9 +52,10 @@
       this.mcastHandlers = new Map(); // '224.0.0.5' -> fn(iface, pkt)
       this.nat = null;                // NAT box (routers only); null = feature absent
       this.getAcl = null;             // fn(num) -> rules[]  (set by devices that own ACLs)
-      // Optional VXLAN endpoint. Peers map an inner IPv4 prefix to a remote
-      // VTEP; the physical underlay only routes the VTEP addresses.
-      this.vxlan = null;               // {vni, sourceInterface, peers:[{network,len,vtep}]}
+      // Optional VXLAN endpoint.  A VNI is bound to one local VLAN and uses
+      // static ingress replication to its remote VTEPs (a deliberately small
+      // control plane, but the data plane is Ethernet-in-UDP/4789 VXLAN).
+      this.vxlan = null;               // {vni,vlanId,sourceInterface,peers:[{vtep}]}
       this._vrrpTicking = false;
     }
 
@@ -77,17 +78,16 @@
       const n = String(name).toLowerCase();
       return this.ifaces.find(i => i.name.toLowerCase() === n) || null;
     }
-    configureVxlan(vni, sourceInterface, peers) {
+    configureVxlan(vni, vlanId, sourceInterface, peers) {
       const source = this.getIface(sourceInterface);
-      if (!source || !Number.isInteger(Number(vni)) || Number(vni) < 1 || Number(vni) > 16777215) {
+      if (!source || !Number.isInteger(Number(vni)) || Number(vni) < 1 || Number(vni) > 16777215 ||
+          !Number.isInteger(Number(vlanId)) || Number(vlanId) < 1 || Number(vlanId) > 4094) {
         this.vxlan = null;
         return false;
       }
       this.vxlan = {
-        vni: Number(vni), sourceInterface: source.name,
-        peers: (peers || []).map(p => ({
-          network: IP.networkOf(p.network, p.len), len: Number(p.len), vtep: p.vtep,
-        })).filter(p => p.network && IP.isValid(p.vtep) && p.len >= 0 && p.len <= 32),
+        vni: Number(vni), vlanId: Number(vlanId), sourceInterface: source.name,
+        peers: (peers || []).map(p => ({ vtep: p.vtep || p })).filter(p => IP.isValid(p.vtep)),
       };
       return true;
     }
@@ -191,18 +191,6 @@
       }
       return NetSim.hashStr(s);
     }
-    _vxlanRoute(dst) {
-      if (!this.vxlan) return null;
-      const source = this.getIface(this.vxlan.sourceInterface);
-      if (!source || !source.ip || !source.isUp()) return null;
-      let best = null;
-      for (const peer of this.vxlan.peers) {
-        if (!IP.inNetwork(dst, peer.network, peer.len)) continue;
-        if (!best || peer.len > best.len) best = peer;
-      }
-      return best ? { source, peer: best } : null;
-    }
-
     /* ---------- ARP ---------- */
     _arpLearn(ip, mac, ifname) {
       this.arpTable.set(ip, { mac, ifname, ts: this.sim.time });
@@ -259,22 +247,6 @@
         return;
       }
       const route = this.lookupRoute(pkt.dst, pkt);
-      // A directly connected subnet always wins. For any other destination a
-      // configured VXLAN Pod-prefix map is authoritative over a default route.
-      // This is what lets a Node keep only underlay routes while reaching Pods
-      // on other Nodes.
-      const vxlan = this._connectedLookup(pkt.dst) ? null : this._vxlanRoute(pkt.dst);
-      if (vxlan) {
-          const outer = pdu.ipv4(vxlan.source.ip, vxlan.peer.vtep, 'vxlan', {
-            vni: this.vxlan.vni,
-            inner: NetSim.clone(pkt),
-          });
-          // The outer packet follows the ordinary underlay route. Inner Pod
-          // addresses remain unchanged and therefore need not be routed there.
-          this.sendIp(outer, opts);
-          this.sim.note('vxlan', `${this.hostname()}: VNI ${this.vxlan.vni} ${pkt.src} -> ${pkt.dst} via ${vxlan.peer.vtep}`);
-          return;
-      }
       if (!route) {
         if (opts.onNoRoute) opts.onNoRoute(pkt);
         return;
@@ -315,11 +287,6 @@
         return;
       }
 
-      if (pkt.proto === 'vxlan') {
-        if (this.ownsIp(pkt.dst)) this._onVxlan(pkt);
-        return;
-      }
-
       const isMine = this.ownsIp(pkt.dst) || this.isLocalBroadcast(pkt.dst);
       if (this.aclCheck && iface.aclIn != null && !this.aclCheck('in', iface, pkt)) {
         this.sim.note('acl', NetSim.t('net.acl.denied', this.hostname(), pkt.src, pkt.dst, pkt.proto, iface.name, 'in'));
@@ -334,17 +301,6 @@
       if (isMine) { this._deliverLocal(iface, pkt); return; }
       if (!this.forwarding) return;   // hosts silently drop transit traffic
       this._forward(iface, pkt);
-    }
-
-    _onVxlan(pkt) {
-      const data = pkt.payload;
-      if (!this.vxlan || !data || data.vni !== this.vxlan.vni || !data.inner || data.inner.l3 !== 'ipv4') return;
-      if (this.vxlan.peers.length && !this.vxlan.peers.some(p => p.vtep === pkt.src)) return;
-      const inner = NetSim.clone(data.inner);
-      // Decapsulation is not another IP routing hop. The receiving VTEP sends
-      // the inner packet to its directly attached Pod subnet at the same TTL.
-      this.sendIp(inner, { forwarded: true });
-      this.sim.note('vxlan', `${this.hostname()}: decapsulated VNI ${data.vni} ${inner.src} -> ${inner.dst}`);
     }
 
     _forward(inIface, pkt) {
@@ -595,6 +551,7 @@
     }
     _onUdp(iface, pkt) {
       const u = pkt.payload;
+      if (u.dstPort === 4789 && u.data && u.data.vxlan && this._onVxlan(iface, pkt, u.data)) return;
       if (u.dstPort === 67 && u.data && u.data.dhcp && this.forwarding &&
           this._dhcpRelay(iface, pkt, u.data)) return;
       const fn = this.udpListeners.get(u.dstPort);
@@ -602,6 +559,30 @@
       if (!this.isLocalBroadcast(pkt.dst)) {
         this._sendIcmpError(pkt, 'dest-unreachable', 'port', iface);
       }
+    }
+
+    /* Actual VXLAN data plane shape: inner Ethernet in outer UDP/4789.
+     * Static peers are a compact replacement for multicast/EVPN control plane. */
+    sendVxlan(peerVtep, innerFrame) {
+      const vx = this.vxlan;
+      const source = vx && this.getIface(vx.sourceInterface);
+      if (!vx || !source || !source.ip || !source.isUp() || !IP.isValid(peerVtep)) return false;
+      const entropy = 49152 + (NetSim.hashStr(`${innerFrame.src}|${innerFrame.dst}|${vx.vni}`) % 16384);
+      const outer = pdu.ipv4(source.ip, peerVtep, 'udp', pdu.udp(entropy, 4789, {
+        vxlan: true, flags: 0x08, vni: vx.vni, inner: NetSim.clone(innerFrame),
+      }));
+      this.sendIp(outer, {});
+      this.sim.note('vxlan', `${this.hostname()}: VXLAN UDP/4789 VNI ${vx.vni} ${innerFrame.src} -> ${innerFrame.dst} via ${peerVtep}`);
+      return true;
+    }
+    _onVxlan(iface, pkt, data) {
+      const vx = this.vxlan;
+      if (!vx || data.vni !== vx.vni || data.flags !== 0x08 || !data.inner || data.inner.l2 !== 'eth') return false;
+      if (vx.peers.length && !vx.peers.some(p => p.vtep === pkt.src)) return true;
+      if (typeof this.device.receiveVxlanFrame !== 'function') return true;
+      this.device.receiveVxlanFrame(vx.vni, NetSim.clone(data.inner), pkt.src);
+      this.sim.note('vxlan', `${this.hostname()}: decapsulated UDP/4789 VNI ${data.vni} ${data.inner.src} -> ${data.inner.dst}`);
+      return true;
     }
 
     /* DHCP relay agent (ip helper-address). Returns true if the packet was relayed. */
@@ -626,6 +607,8 @@
 
     /* ---------- VRRP ---------- */
     configureVrrp(iface, gid, vip, priority) {
+      if (!Number.isInteger(Number(gid)) || gid < 1 || gid > 255 ||
+          !Number.isInteger(Number(priority)) || priority < 1 || priority > 255) return false;
       const hexId = gid.toString(16).padStart(2, '0');
       iface.vrrp = {
         gid, vip, priority: priority || 100,
@@ -634,6 +617,7 @@
       };
       this.mcastHandlers.set('224.0.0.18', (ifc, pkt) => this._onVrrpAdvert(ifc, pkt));
       this._startVrrpTick();
+      return true;
     }
     removeVrrp(iface) { iface.vrrp = null; }
     _startVrrpTick() {
@@ -666,7 +650,7 @@
       v.lastSent = this.sim.time;
       const pkt = pdu.ipv4(iface.ip, '224.0.0.18', 'vrrp',
         { gid: v.gid, priority: v.priority, vip: v.vip });
-      pkt.ttl = 1;
+      pkt.ttl = 255;
       // sourced from the virtual MAC (as real VRRP does) so that switches keep
       // the vMAC pinned to the current master's port
       iface.send(pdu.eth(v.vmac, '01:00:5e:00:00:12', 'ipv4', pkt));
@@ -683,6 +667,7 @@
     }
     _onVrrpAdvert(iface, pkt) {
       const v = iface.vrrp;
+      if (pkt.ttl !== 255) return;
       if (!v || !pkt.payload || pkt.payload.gid !== v.gid) return;
       const p = pkt.payload;
       const theirsWins = p.priority > v.priority ||
