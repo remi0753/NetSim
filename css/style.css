@@ -226,10 +226,35 @@ body {
   border: 1px solid var(--border); border-radius: 5px;
   padding: 3px 8px; width: 220px; font-size: 12px; font-family: var(--mono);
 }
+.pl-protocol-menu { position: relative; }
+.pl-protocol-menu > summary {
+  display: flex; align-items: center; gap: 5px; list-style: none;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 5px;
+  padding: 3px 8px; color: var(--text); cursor: pointer; user-select: none;
+}
+.pl-protocol-menu > summary::-webkit-details-marker { display: none; }
+.pl-protocol-menu > summary::after { content: '▾'; color: var(--text-dim); }
+.pl-protocol-menu[open] > summary { border-color: var(--accent); }
+#pl-protocol-summary { color: var(--text-dim); font-size: 11px; }
+.pl-protocol-menu-body {
+  position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; width: 238px;
+  padding: 8px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 6px; box-shadow: 0 8px 20px rgba(0, 0, 0, .35);
+}
+.pl-protocol-actions { display: flex; gap: 6px; padding-bottom: 7px; border-bottom: 1px solid var(--border); }
+.pl-protocol-actions button {
+  border: 0; padding: 0; background: transparent; color: var(--accent);
+  cursor: pointer; font: inherit; font-size: 11px;
+}
+.pl-protocol-actions button:hover { text-decoration: underline; }
+.pl-protocol-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 8px; padding-top: 8px; }
+.pl-protocol-options label { display: flex; align-items: center; color: var(--text); cursor: pointer; white-space: nowrap; }
+.pl-protocol-options .dot { margin-left: 4px; }
 .pl-legend { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 11px; }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 3px; }
 .dot.arp { background: var(--c-arp); } .dot.icmp { background: var(--c-icmp); }
 .dot.tcp { background: var(--c-tcp); } .dot.udp { background: var(--c-udp); }
+.dot.dhcp { background: var(--c-udp); }
 .dot.vxlan { background: var(--c-vxlan); }
 .dot.ctrl { background: var(--c-ctrl); }
 #pl-rows { flex: 1; overflow-y: auto; font-family: var(--mono); font-size: 11.5px; }

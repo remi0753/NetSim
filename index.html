@@ -89,6 +89,28 @@
     <div class="bpanel active" id="panel-packets">
       <div class="pl-toolbar">
         <input id="pl-filter" type="text" data-i18n-ph="pl.filter.ph" placeholder="フィルタ (例: ARP / 10.0.1 / TCP)">
+        <details class="pl-protocol-menu">
+          <summary data-i18n-title="pl.protocol.title" title="表示するプロトコル">
+            <span data-i18n="pl.protocol">プロトコル</span>
+            <span id="pl-protocol-summary">すべて</span>
+          </summary>
+          <div class="pl-protocol-menu-body">
+            <div class="pl-protocol-actions">
+              <button type="button" id="pl-protocol-all" data-i18n="pl.protocol.all">すべて選択</button>
+              <button type="button" id="pl-protocol-none" data-i18n="pl.protocol.none">すべて解除</button>
+            </div>
+            <div class="pl-protocol-options" role="group" data-i18n-title="pl.protocol.title" title="表示するプロトコル">
+              <label><input type="checkbox" id="pl-filter-arp" data-protocol-filter="arp" checked><i class="dot arp"></i>ARP</label>
+              <label><input type="checkbox" id="pl-filter-icmp" data-protocol-filter="icmp" checked><i class="dot icmp"></i>ICMP</label>
+              <label><input type="checkbox" id="pl-filter-tcp" data-protocol-filter="tcp" checked><i class="dot tcp"></i>TCP</label>
+              <label><input type="checkbox" id="pl-filter-udp" data-protocol-filter="udp" checked><i class="dot udp"></i>UDP</label>
+              <label><input type="checkbox" id="pl-filter-dhcp" data-protocol-filter="dhcp" checked><i class="dot dhcp"></i>DHCP</label>
+              <label><input type="checkbox" id="pl-filter-vxlan" data-protocol-filter="vxlan" checked><i class="dot vxlan"></i>VXLAN</label>
+              <label><input type="checkbox" id="pl-filter-ospf" data-protocol-filter="ospf" checked><i class="dot ctrl"></i>OSPF</label>
+              <label><input type="checkbox" id="pl-filter-vrrp" data-protocol-filter="vrrp" checked><i class="dot ctrl"></i>VRRP</label>
+            </div>
+          </div>
+        </details>
         <label><input type="checkbox" id="pl-autoscroll" checked> <span data-i18n="pl.autoscroll">自動スクロール</span></label>
         <label><input type="checkbox" id="pl-capture" checked> <span data-i18n="pl.capture">キャプチャ</span></label>
         <button id="pl-clear" class="tb-btn" data-i18n="pl.clear">クリア</button>

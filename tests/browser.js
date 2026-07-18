@@ -80,6 +80,16 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   ok(plInfo.count > 5, `パケットログに記録 (${plInfo.count}行)`);
   ok(plInfo.hasArp && plInfo.hasIcmp, 'ARP と ICMP がログに存在');
 
+  // 3b. all protocol filters are available from the compact menu
+  const protocolFilters = await page.evaluate(() => ({
+    values: [...document.querySelectorAll('[data-protocol-filter]')].map(el => el.dataset.protocolFilter),
+    summary: document.getElementById('pl-protocol-summary').textContent,
+    menu: !!document.querySelector('.pl-protocol-menu'),
+  }));
+  ok(protocolFilters.menu && protocolFilters.summary.includes('すべて') &&
+    protocolFilters.values.join(',') === 'arp,icmp,tcp,udp,dhcp,vxlan,ospf,vrrp',
+    '全プロトコルのフィルターをコンパクトなメニューに表示');
+
   // 4. decode detail
   const detail = await page.evaluate(() => {
     const row = [...document.querySelectorAll('.pl-row')].find(r => r.textContent.includes('ICMP Echo'));
@@ -247,6 +257,54 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   });
   ok(ospfInfo.neighbors === 2, `LEAF1のOSPFネイバー2件 (スパイン2台)`);
   ok(ospfInfo.ecmp, 'ECMP経路 (ネクストホップ2つ) を学習');
+
+  // 12b. protocol filters hide only their matching packets and compose with text filtering
+  const protocolFilterResult = await page.evaluate(() => {
+    const app = window.netsimApp;
+    const from = app.net.findByName('LEAF1').ports.find(port => port.link);
+    const pdu = window.NetSim.pdu;
+    const add = (frame) => app.packetLog.addFrame({
+      frame,
+      fromPort: from, link: from.link, tStart: app.sim.time,
+    });
+    add(pdu.eth('00:00:5e:00:00:01', '01:00:5e:00:00:05', 'ipv4',
+      pdu.ipv4('10.0.0.1', '224.0.0.5', 'ospf', { type: 'hello', routerId: '10.0.0.1', seen: [] })));
+    add(pdu.eth('00:00:5e:00:00:01', '01:00:5e:00:00:12', 'ipv4',
+      pdu.ipv4('10.0.0.1', '224.0.0.18', 'vrrp', { gid: 1, priority: 100, vip: '10.0.0.254' })));
+    add(pdu.eth('00:00:5e:00:00:01', 'ff:ff:ff:ff:ff:ff', 'arp',
+      pdu.arpRequest('00:00:5e:00:00:01', '10.0.0.1', '10.0.0.254')));
+
+    const ospfEntry = app.packetLog.entries.findLast(entry => entry.protocol === 'ospf');
+    const vrrpEntry = app.packetLog.entries.findLast(entry => entry.protocol === 'vrrp');
+    const arpEntry = app.packetLog.entries.findLast(entry => entry.protocol === 'arp');
+    const ospf = document.getElementById('pl-filter-ospf');
+    const vrrp = document.getElementById('pl-filter-vrrp');
+    ospf.checked = false;
+    ospf.dispatchEvent(new Event('change'));
+    const ospfHidden = ospfEntry.row.style.display === 'none';
+    const otherProtocolsStillVisible = vrrpEntry.row.style.display !== 'none' && arpEntry.row.style.display !== 'none';
+    vrrp.checked = false;
+    vrrp.dispatchEvent(new Event('change'));
+    const vrrpHidden = vrrpEntry.row.style.display === 'none';
+    ospf.checked = true;
+    vrrp.checked = true;
+    ospf.dispatchEvent(new Event('change'));
+    document.getElementById('pl-protocol-none').click();
+    const allHidden = [ospfEntry, vrrpEntry, arpEntry].every(entry => entry.row.style.display === 'none');
+    document.getElementById('pl-protocol-all').click();
+    const allVisible = [ospfEntry, vrrpEntry, arpEntry].every(entry => entry.row.style.display !== 'none');
+    const text = document.getElementById('pl-filter');
+    text.value = 'vrrp';
+    text.dispatchEvent(new Event('input'));
+    const textFilterStillWorks = ospfEntry.row.style.display === 'none' &&
+      vrrpEntry.row.style.display !== 'none';
+    text.value = '';
+    text.dispatchEvent(new Event('input'));
+    return { ospfHidden, otherProtocolsStillVisible, vrrpHidden, allHidden, allVisible, textFilterStillWorks };
+  });
+  ok(protocolFilterResult.ospfHidden && protocolFilterResult.otherProtocolsStillVisible &&
+    protocolFilterResult.vrrpHidden && protocolFilterResult.allHidden && protocolFilterResult.allVisible &&
+    protocolFilterResult.textFilterStillWorks, 'プロトコルを個別/一括で表示・非表示（テキストフィルターと併用）');
   await page.evaluate(() => {
     const app = window.netsimApp;
     app.openConsole(app.net.findByName('H1-1'));
