@@ -25,7 +25,7 @@ python3 -m http.server   # → http://localhost:8000
 |---|---|
 | **L1 Physical** | Cabling, link up/down, `shutdown` / `no shutdown`, repeater hubs |
 | **L2 Data Link** | Ethernet frames, MAC address learning & aging, flooding, 802.1Q VLANs (access/trunk/native VLAN), **STP (root/designated/alternate port selection)**, **static port channels (flow-hash distribution)**, loop safety guard |
-| **L3 Network** | ARP, IPv4 routing (longest-prefix match + administrative distance), static routes, **OSPF-style dynamic routing (Hello / LSA flooding / SPF)**, **ECMP (flow-hash distribution over equal-cost paths)**, TTL decrement, ICMP, inter-VLAN routing via SVIs, **VRRP (virtual IP / virtual MAC / preempt)**, **DHCP (client / server / `ip helper-address` relay)**, router-only **NAT/PAT (inside/outside interfaces, static NAT, interface overload = PAT, proxy-ARP for static publishing)**, **VXLAN (inner Ethernet over UDP/4789, static VTEP peers)** |
+| **L3 Network** | ARP, IPv4 routing (longest-prefix match + administrative distance), static routes, **OSPF-style dynamic routing (multi-area: Hello / area-scoped LSA flooding / ABR summaries / SPF)**, **ECMP (flow-hash distribution over equal-cost paths)**, TTL decrement, ICMP, inter-VLAN routing via SVIs, **VRRP (virtual IP / virtual MAC / preempt)**, **DHCP (client / server / `ip helper-address` relay)**, router-only **NAT/PAT (inside/outside interfaces, static NAT, interface overload = PAT, proxy-ARP for static publishing)**, **VXLAN (inner Ethernet over UDP/4789, static VTEP peers)** |
 | **L4 Transport** | TCP (three-way handshake, FIN/RST), UDP, a simple HTTP server/client, extended ACLs, **L4 load balancer (round-robin + health checks)** |
 
 ### Devices
@@ -176,7 +176,7 @@ tests/                Node tests and browser tests
 
 ## Known Simplifications
 
-- OSPF is area 0 only, with no DR election (SPF treats subnets as pseudo-nodes). The real-device configuration model is preserved
+- OSPF supports area IDs `0`–`4294967295`; non-backbone areas exchange routes through an ABR connected to area 0. There is no DR election, and SPF treats subnets as pseudo-nodes. Stub/NSSA areas, virtual links, route filtering, and LSA types other than the simulator's router/summary model are not implemented
 - Port channels are static (`channel-group <n> mode on`); LACP negotiation/LACPDU is not implemented
 - STP defaults to a Rapid PVST+ equivalent (one tree per VLAN); `spanning-tree mode rstp` selects a common tree. Both converge immediately after a topology change and omit BPDU timing, listening/learning timer states, and MSTP
 - TCP is a simplified implementation with no retransmission or window control

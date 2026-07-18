@@ -78,6 +78,12 @@
       const n = String(name).toLowerCase();
       return this.ifaces.find(i => i.name.toLowerCase() === n) || null;
     }
+    displayIface(ifaceOrName) {
+      const iface = typeof ifaceOrName === 'string' ? this.getIface(ifaceOrName) : ifaceOrName;
+      if (!iface) return String(ifaceOrName || '');
+      const port = this.device.ports.find(p => p.l3iface === iface);
+      return port ? port.shortName : iface.name;
+    }
     configureVxlan(vni, vlanId, sourceInterface, peers) {
       const source = this.getIface(sourceInterface);
       if (!source || !Number.isInteger(Number(vni)) || Number(vni) < 1 || Number(vni) > 16777215 ||
@@ -266,7 +272,7 @@
     }
 
     _aclDeny(iface, pkt, dir) {
-      this.sim.note('acl', NetSim.t('net.acl.denied', this.hostname(), pkt.src, pkt.dst, pkt.proto, iface.name, dir));
+      this.sim.note('acl', NetSim.t('net.acl.denied', this.hostname(), pkt.src, pkt.dst, pkt.proto, this.displayIface(iface), dir));
       this._sendIcmpError(pkt, 'dest-unreachable', 'admin', null);
     }
 
@@ -289,7 +295,7 @@
 
       const isMine = this.ownsIp(pkt.dst) || this.isLocalBroadcast(pkt.dst);
       if (this.aclCheck && iface.aclIn != null && !this.aclCheck('in', iface, pkt)) {
-        this.sim.note('acl', NetSim.t('net.acl.denied', this.hostname(), pkt.src, pkt.dst, pkt.proto, iface.name, 'in'));
+        this.sim.note('acl', NetSim.t('net.acl.denied', this.hostname(), pkt.src, pkt.dst, pkt.proto, this.displayIface(iface), 'in'));
         if (!this.isLocalBroadcast(pkt.dst)) this._sendIcmpError(pkt, 'dest-unreachable', 'admin', iface);
         return;
       }

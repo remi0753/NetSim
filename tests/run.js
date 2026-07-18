@@ -301,9 +301,11 @@ section('CLI (IOS風)');
   ok(!rtOut.slice(beforeEnableAgain).some(l => l.includes('Invalid input') || l.includes('認識されない')),
     '特権モード中の enable はエラーにしない');
   rt1.exec('sh ip int br');
-  ok(rtOut.some(l => l.includes('GigabitEthernet0/0') && l.includes('10.0.1.254')), '省略形 "sh ip int br" が動く');
+  ok(rtOut.some(l => l.includes('Gi0/0') && !l.includes('GigabitEthernet0/0') && l.includes('10.0.1.254')), '省略形 "sh ip int br" が短縮IF名で動く');
   rt1.exec('sh ip route');
-  ok(rtOut.some(l => l.startsWith('C') && l.includes('10.0.1.0/24')), 'show ip route に接続経路');
+  ok(rtOut.some(l => l.startsWith('C') && l.includes('10.0.1.0/24') && l.includes('Gi0/0')), 'show ip route に短縮IF名の接続経路');
+  rt1.exec('show arp');
+  ok(rtOut.some(l => l.includes('Gi0/0') && !l.includes('GigabitEthernet0/0')), 'show arp に短縮IF名');
 
   // ルータから ping
   const r = (() => {
@@ -370,10 +372,11 @@ section('実機範囲の入力検証');
   const out = capture(rt);
   for (const c of ['enable', 'conf t', 'interface Gi0/0', 'vrrp 256 ip 10.0.0.254',
     'vrrp 1 ip 10.0.0.254', 'vrrp 1 priority 256', 'end', 'conf t', 'router ospf 1',
-    'network 10.0.0.0 0.0.0.255 area 1', 'end']) rt.exec(c);
+    'network 10.0.0.0 0.0.0.255 area 1', 'network 10.0.0.0 0.0.0.255 area 4294967296', 'end']) rt.exec(c);
   ok(!p.l3iface.vrrp || p.l3iface.vrrp.gid !== 256, 'VRRPグループ 256 を拒否');
   ok(p.l3iface.vrrp && p.l3iface.vrrp.priority === 100, 'VRRP priority 256 を拒否');
-  ok(out.some(l => l.includes('area 0')), 'OSPF area 0 以外を拒否');
+  ok(rt.ospf.networks.some(n => n.area === 1), 'OSPF area 1 を受理');
+  ok(out.some(l => l.includes('4294967295')), '範囲外のOSPF areaを拒否');
   p.l3iface.vrrp = null;
   ok(rt.stack.configureVrrp(p.l3iface, 1, '10.0.0.254', 100), '有効なVRRPを設定');
   rt.stack._sendVrrpAdvert(p.l3iface);
@@ -486,8 +489,12 @@ section('OSPF: 動的ルーティング');
   r1.exec('show ip ospf neighbor');
   r1.exec('show ip route');
   ok(out.some(l => l.includes('FULL')), 'show ip ospf neighbor に FULL');
+  ok(out.some(l => l.includes('Gi0/1') && !l.includes('GigabitEthernet0/1')),
+    'show ip ospf neighbor のインターフェースを短縮名で表示');
   ok(out.some(l => l.startsWith('O') && l.includes('10.2.0.0/24') && l.includes('[110/')),
     'show ip route に O 経路');
+  ok(out.some(l => l.includes('via 10.12.0.2, Gi0/1') && !l.includes('GigabitEthernet0/1')),
+    'show ip route のOSPFネクストホップを短縮IF名で表示');
 
   // リンク断 → 経路消滅
   for (const c of ['conf t', 'interface Gi0/1', 'shutdown', 'end']) r1.exec(c);
@@ -498,6 +505,58 @@ section('OSPF: 動的ルーティング');
   sim.advance(30000);
   const r3 = pingSync(sim, pc1, '10.2.0.10');
   ok(r3.result === true, '復旧後に再収束して ping 成功');
+}
+
+section('OSPF: マルチエリア (ABR)');
+{
+  // PC1 - R1(area 1) - ABR(area 1 / area 0) - R2(area 0) - PC2
+  const { sim, net } = fresh();
+  const pc1 = net.addDevice('pc', 0, 0), pc2 = net.addDevice('pc', 0, 0);
+  const r1 = net.addDevice('router', 0, 0), abr = net.addDevice('router', 0, 0), r2 = net.addDevice('router', 0, 0);
+  net.connect(pc1, 'eth0', r1, 'Gi0/0');
+  net.connect(r1, 'Gi0/1', abr, 'Gi0/0');
+  net.connect(abr, 'Gi0/1', r2, 'Gi0/1');
+  net.connect(r2, 'Gi0/0', pc2, 'eth0');
+  pc1.setIp('10.1.0.10', 24, '10.1.0.1');
+  pc2.setIp('10.3.0.10', 24, '10.3.0.1');
+  const ifaces = [
+    [r1, [['Gi0/0', '10.1.0.1'], ['Gi0/1', '10.12.0.1']]],
+    [abr, [['Gi0/0', '10.12.0.2'], ['Gi0/1', '10.23.0.1']]],
+    [r2, [['Gi0/0', '10.3.0.1'], ['Gi0/1', '10.23.0.2']]],
+  ];
+  for (const [rt, ports] of ifaces) for (const [name, ip] of ports) {
+    const p = rt.getPort(name); p.adminUp = true; p.l3iface.setIp(ip, 24);
+  }
+  const configure = (rt, networks) => {
+    for (const c of ['enable', 'conf t', 'router ospf 1', ...networks, 'end']) rt.exec(c);
+  };
+  configure(r1, ['network 10.0.0.0 0.255.255.255 area 1']);
+  configure(abr, ['network 10.12.0.0 0.0.0.255 area 1', 'network 10.23.0.0 0.0.0.255 area 0']);
+  configure(r2, ['network 10.0.0.0 0.255.255.255 area 0']);
+  sim.advance(50000);
+  ok(r1.ospf.neighbors.size === 1 && abr.ospf.neighbors.size === 2 && r2.ospf.neighbors.size === 1,
+    'areaごとにABRとのOSPFネイバーを確立');
+  const r1Routes = r1.stack.dynRoutes.get('ospf') || [], r2Routes = r2.stack.dynRoutes.get('ospf') || [];
+  ok(r1Routes.some(r => r.network === '10.3.0.0' && r.nexthops.includes('10.12.0.2')),
+    'area 1のR1がABR経由でarea 0の経路を学習');
+  ok(r2Routes.some(r => r.network === '10.1.0.0' && r.nexthops.includes('10.23.0.1')),
+    'area 0のR2がABR経由でarea 1の経路を学習');
+  ok(pingSync(sim, pc1, '10.3.0.10').result === true, '異なるarea間でping成功');
+  const out = capture(abr);
+  abr.exec('show ip ospf neighbor');
+  abr.exec('show ip ospf database');
+  ok(out.some(l => l.includes('Area')) && out.some(l => l.includes('inter-area')),
+    'OSPF表示でareaとABRの要約経路を確認できる');
+  // 同じL2上でもareaが違えば隣接しない。
+  const isolated = net.addDevice('router', 0, 0);
+  net.connect(isolated, 'Gi0/0', abr, 'Gi0/2');
+  const ip = isolated.getPort('Gi0/0'); ip.adminUp = true; ip.l3iface.setIp('10.12.0.3', 24);
+  const abrPort = abr.getPort('Gi0/2'); abrPort.adminUp = true; abrPort.l3iface.setIp('10.12.0.4', 24);
+  configure(isolated, ['network 10.12.0.0 0.0.0.255 area 2']);
+  // ABR Gi0/2 is intentionally area 1 because its earlier wildcard is first.
+  sim.advance(30000);
+  ok(![...isolated.ospf.neighbors.values()].some(n => n.routerId === abr.ospf.routerId),
+    'area不一致のOSPF Helloではネイバーを形成しない');
 }
 
 section('OSPF: ECMP (スパイン・リーフ)');

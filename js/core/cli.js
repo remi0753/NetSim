@@ -268,7 +268,7 @@
           dev.ospf.manualRouterId = a[0]; dev.changed();
         });
         this.add('config-router', 'network <ip> <ip> area <num>', 'cli.h.network', (a) => {
-          if (a[2] !== 0) { this.out(t('cli.m.ospfArea0Only')); return; }
+          if (!Number.isInteger(a[2]) || a[2] < 0 || a[2] > 4294967295) { this.out(t('cli.m.ospfAreaRange')); return; }
           dev.ospf.networks.push({ net: a[0], wild: a[1], area: a[2] });
           dev.changed();
         });
@@ -448,7 +448,10 @@
       dev.changed();
     }
 
-    _ifaceDisplayName(iface) {
+    _ifaceDisplayName(ifaceOrName) {
+      const iface = typeof ifaceOrName === 'string'
+        ? this.device.stack.getIface(ifaceOrName) : ifaceOrName;
+      if (!iface) return String(ifaceOrName || '');
       const port = this.device.ports.find(p => p.l3iface === iface);
       return port ? port.shortName : iface.name;
     }
@@ -622,7 +625,7 @@
           proto = status;
         }
         this.out(
-          iface.name.padEnd(23) +
+          this._ifaceDisplayName(iface).padEnd(23) +
           (iface.ip || 'unassigned').padEnd(16) +
           'YES manual '.padEnd(11) +
           status.padEnd(22) + proto);
@@ -637,17 +640,17 @@
       rows.sort((a, b) => IP.toInt(a.network) - IP.toInt(b.network) || a.len - b.len);
       for (const r of rows) {
         if (r.type === 'C') {
-          this.out(`C    ${r.network}/${r.len} is directly connected, ${r.ifname}`);
+          this.out(`C    ${r.network}/${r.len} is directly connected, ${this._ifaceDisplayName(r.ifname)}`);
         } else if (r.type === 'S') {
           const flag = r.network === '0.0.0.0' && r.len === 0 ? 'S*  ' : 'S   ';
-          this.out(`${flag} ${r.network}/${r.len} [1/0] via ${r.nexthops[0]}${r.ifname ? ', ' + r.ifname : t('cli.o.unresolved')}`);
+          this.out(`${flag} ${r.network}/${r.len} [1/0] via ${r.nexthops[0]}${r.ifname ? ', ' + this._ifaceDisplayName(r.ifname) : t('cli.o.unresolved')}`);
         } else {
           // dynamic (ECMP: one via-line per nexthop)
           const head = `O    ${r.network}/${r.len} [110/${r.metric}]`;
           const hops = r.hops && r.hops.length ? r.hops : r.nexthops.map(nh => ({ nexthop: nh, ifname: null }));
           hops.forEach((h, i) => {
             const prefix = i === 0 ? head : ' '.repeat(head.length);
-            this.out(`${prefix} via ${h.nexthop}${h.ifname ? ', ' + h.ifname : ''}`);
+            this.out(`${prefix} via ${h.nexthop}${h.ifname ? ', ' + this._ifaceDisplayName(h.ifname) : ''}`);
           });
         }
       }
@@ -657,10 +660,10 @@
       const ospf = this.device.ospf;
       if (!ospf || !ospf.enabled) { this.out(t('cli.o.ospfNotRunning')); return; }
       this.out(`OSPF Router ID: ${ospf.routerId || t('cli.o.pending')}  Process: ${ospf.processId}`);
-      this.out('Neighbor ID     State      Address         Interface');
+      this.out('Neighbor ID     State      Address         Interface      Area');
       for (const n of ospf.neighbors.values()) {
         const dead = Math.max(0, Math.round((20000 - (this.device.sim.time - n.lastSeen)) / 1000));
-        this.out(`${n.routerId.padEnd(16)}${(n.twoWay ? 'FULL' : 'INIT').padEnd(11)}${n.ip.padEnd(16)}${n.ifname} (dead ${dead}s)`);
+        this.out(`${n.routerId.padEnd(16)}${(n.twoWay ? 'FULL' : 'INIT').padEnd(11)}${n.ip.padEnd(16)}${this._ifaceDisplayName(n.iface).padEnd(15)}${n.area} (dead ${dead}s)`);
       }
       if (!ospf.neighbors.size) this.out(t('cli.o.noNeighbors'));
     }
@@ -670,8 +673,8 @@
       this.out('OSPF Link State Database (Router LSAs)');
       for (const { lsa, ts } of ospf.lsdb.values()) {
         const age = Math.round((this.device.sim.time - ts) / 1000);
-        this.out(`  RID ${lsa.routerId}  seq=${lsa.seq}  age=${age}s`);
-        for (const net of lsa.nets) this.out(`     ${net.network}/${net.len}  cost ${net.cost}`);
+        this.out(`  Area ${lsa.area}  RID ${lsa.routerId}  seq=${lsa.seq}  age=${age}s`);
+        for (const net of lsa.nets) this.out(`     ${net.network}/${net.len}  cost ${net.cost}${net.scope === 'inter' ? ' (inter-area)' : ''}`);
       }
       if (!ospf.lsdb.size) this.out(t('cli.o.noLsa'));
     }
@@ -708,10 +711,10 @@
     _showArp() {
       this.out('Protocol  Address          Age (sec)  Hardware Addr       Interface');
       for (const iface of this.device.stack.ifaces) {
-        if (iface.ip) this.out(`Internet  ${iface.ip.padEnd(17)}-          ${iface.mac.padEnd(20)}${iface.name}`);
+        if (iface.ip) this.out(`Internet  ${iface.ip.padEnd(17)}-          ${iface.mac.padEnd(20)}${this._ifaceDisplayName(iface)}`);
       }
       for (const r of this.device.stack.arpRows()) {
-        this.out(`Internet  ${r.ip.padEnd(17)}${String(r.age).padEnd(11)}${r.mac.padEnd(20)}${r.ifname}`);
+        this.out(`Internet  ${r.ip.padEnd(17)}${String(r.age).padEnd(11)}${r.mac.padEnd(20)}${this._ifaceDisplayName(r.ifname)}`);
       }
     }
 
@@ -878,7 +881,7 @@
         L.push(`router ospf ${dev.ospf.processId}`);
         if (dev.ospf.manualRouterId) L.push(` router-id ${dev.ospf.manualRouterId}`);
         for (const n of dev.ospf.networks) L.push(` network ${n.net} ${n.wild} area ${n.area}`);
-        for (const pi of dev.ospf.passive) L.push(` passive-interface ${pi}`);
+        for (const pi of dev.ospf.passive) L.push(` passive-interface ${this._ifaceDisplayName(pi)}`);
         L.push('!');
       }
       if (caps.l3) {
@@ -888,12 +891,12 @@
       }
       if (caps.vxlan && dev.stack.vxlan) {
         const vx = dev.stack.vxlan;
-        L.push(`vxlan vni ${vx.vni} vlan ${vx.vlanId} source-interface ${vx.sourceInterface}`);
+        L.push(`vxlan vni ${vx.vni} vlan ${vx.vlanId} source-interface ${this._ifaceDisplayName(vx.sourceInterface)}`);
         for (const p of vx.peers) L.push(`vxlan peer ${p.vtep}`);
       }
       if (caps.nat && dev.stack.nat) {
         for (const s of dev.stack.nat.statics) L.push(`ip nat inside source static ${s.localIp} ${s.globalIp}`);
-        for (const r of dev.stack.nat.dynRules) L.push(`ip nat inside source list ${r.aclNum} interface ${r.ifname} overload`);
+        for (const r of dev.stack.nat.dynRules) L.push(`ip nat inside source list ${r.aclNum} interface ${this._ifaceDisplayName(r.ifname)} overload`);
       }
       if (caps.acl && dev.acls) {
         for (const [num, rules] of dev.acls) {

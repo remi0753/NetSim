@@ -185,12 +185,13 @@
       }
     } else if (ip.proto === 'ospf') {
       const f = { 'Type': l4.type === 'lsu' ? 'LS Update' : (l4.type === 'hello' ? 'Hello' : 'LSA Purge') };
+      if (l4.area != null) f['Area'] = String(l4.area);
       if (l4.routerId) f['Router ID'] = l4.routerId;
       if (l4.seen) f['Neighbors seen'] = l4.seen.join(', ') || '(none)';
       if (l4.lsas) {
         f['LSA count'] = String(l4.lsas.length);
         l4.lsas.slice(0, 6).forEach((lsa, i) => {
-          f[`LSA[${i}] RID=${lsa.routerId} seq=${lsa.seq}`] =
+          f[`LSA[${i}] Area=${lsa.area} RID=${lsa.routerId} seq=${lsa.seq}`] =
             lsa.nets.map(n => `${n.network}/${n.len}(cost ${n.cost})`).join(', ');
         });
       }

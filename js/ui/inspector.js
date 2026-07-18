@@ -351,8 +351,7 @@
         .filter(iface => iface.vrrp)
         .map(iface => {
           const v = iface.vrrp;
-          const port = dev.ports.find(p => p.l3iface === iface);
-          const ifName = port ? port.shortName : iface.name;
+          const ifName = this._ifaceDisplayName(dev, iface.name);
           const cls = v.state === 'master' ? 'st-up' : 'st-off';
           return `
             <tr>
@@ -372,6 +371,12 @@
           </table>
           <div class="insp-note">${t('insp.vrrp.note')}</div>
         </div>`;
+    }
+
+    _ifaceDisplayName(dev, ifname) {
+      const iface = dev.stack && dev.stack.getIface ? dev.stack.getIface(ifname) : null;
+      const port = iface && dev.ports.find(p => p.l3iface === iface);
+      return port ? port.shortName : ifname;
     }
 
     _ospfNoteHtml(dev) {
@@ -610,7 +615,7 @@
         <table class="insp-table">
           <tr><th>VNI</th><td>${vx.vni}</td></tr>
           <tr><th>VLAN</th><td>${vx.vlanId}</td></tr>
-          <tr><th>${t('insp.vxlan.source')}</th><td>${esc(vx.sourceInterface)}</td></tr>
+          <tr><th>${t('insp.vxlan.source')}</th><td>${esc(this._ifaceDisplayName(dev, vx.sourceInterface))}</td></tr>
           <tr><th>${t('insp.vxlan.localVtep')}</th><td>${esc(localVtep)}</td></tr>
         </table>
         <div class="insp-note">${t('insp.vxlan.note')}</div>
@@ -635,7 +640,7 @@
         <tr data-si="${i}"><td>${s.localIp}</td><td>→ ${s.globalIp}</td>
         <td><button class="insp-btn nat-static-del" title="${t('insp.del.t')}">✕</button></td></tr>`).join('');
       const dyn = nat.dynRules.length
-        ? nat.dynRules.map(r => `ACL ${r.aclNum} → ${r.ifname} <b>overload</b>`).join('<br>')
+        ? nat.dynRules.map(r => `ACL ${r.aclNum} → ${this._ifaceDisplayName(dev, r.ifname)} <b>overload</b>`).join('<br>')
         : t('insp.nat.dynNone');
       const rows = nat.rows();
       const transRows = rows.length
