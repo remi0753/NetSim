@@ -599,6 +599,18 @@ section('VXLAN: Ethernet-over-UDP/4789 overlay');
   ok(net2.findByName('NODE1').stack.vxlan.vni === 42, 'VXLAN設定が保存・復元される');
 }
 
+section('サンプル6: VXLANテナント・オーバーレイ');
+{
+  const { sim, net } = fresh('vxlan-fabric');
+  const client = net.findByName('CLIENT1');
+  const app = net.findByName('APP3');
+  sim.advance(30000);
+  const r = pingSync(sim, client, '10.244.10.23');
+  ok(net.devices.length === 11 && net.links.length === 12, '3 VTEP・デュアルスパイン・各サイトのクライアント/アプリを生成');
+  ok(client && app && r.result === true, 'サンプルのVNI 10100で別VTEP上のアプリへ疎通');
+  ok(net.findByName('VTEP1').stack.vxlan.peers.length === 2, '各VTEPに他2台への静的VXLAN peerを設定');
+}
+
 /* ---------- LACP ---------- */
 section('LACP: ポートチャネル');
 {

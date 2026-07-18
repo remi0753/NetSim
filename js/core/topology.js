@@ -578,6 +578,70 @@
     ]) rt1.exec(c);
   }
 
+  /* VXLAN sample: three tenant-edge VTEPs share one L2 segment across a
+   * routed, dual-spine underlay.  The source SVI on each VTEP is deliberately
+   * distinct from the tenant VLAN, as it is on a real VTEP. */
+  function sampleVxlanFabric(net) {
+    const spine1 = net.addDevice('l3switch', 440, 100, 'SPINE1');
+    const spine2 = net.addDevice('l3switch', 920, 100, 'SPINE2');
+    const nodes = [
+      net.addDevice('l3switch', 220, 360, 'VTEP1'),
+      net.addDevice('l3switch', 680, 360, 'VTEP2'),
+      net.addDevice('l3switch', 1140, 360, 'VTEP3'),
+    ];
+    const endpoints = [];
+
+    const ospf = (sw) => {
+      for (const c of ['enable', 'conf t', 'router ospf 1',
+        'network 172.16.0.0 0.0.255.255 area 0', 'end']) sw.exec(c);
+    };
+
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      const n = i + 1;
+      const vlanS1 = 100 + n, vlanS2 = 200 + n;
+      const subnet = `172.16.${n}`;
+
+      // Each routed underlay link has its own VLAN/SVI pair.
+      for (const [sw, port, vlan, host, label] of [
+        [node, 'Gi0/1', vlanS1, `${subnet}.1`, 'SPINE1'],
+        [spine1, `Gi0/${n}`, vlanS1, `${subnet}.2`, `VTEP${n}`],
+        [node, 'Gi0/2', vlanS2, `${subnet}.5`, 'SPINE2'],
+        [spine2, `Gi0/${n}`, vlanS2, `${subnet}.6`, `VTEP${n}`],
+      ]) {
+        sw.addVlan(vlan, `UNDERLAY-${label}`);
+        sw.cfg(sw.getPort(port)).accessVlan = vlan;
+        sw.createSvi(vlan).setIp(host, 30);
+      }
+      net.connect(node, 'Gi0/1', spine1, `Gi0/${n}`);
+      net.connect(node, 'Gi0/2', spine2, `Gi0/${n}`);
+
+      // VLAN 10 is the tenant's stretched L2 segment, represented by VNI 10100.
+      node.addVlan(10, 'TENANT-A');
+      node.cfg(node.getPort('Gi0/3')).accessVlan = 10;
+      node.cfg(node.getPort('Gi0/4')).accessVlan = 10;
+      const client = net.addDevice('pc', 120 + i * 460, 600, `CLIENT${n}`);
+      const server = net.addDevice('server', 300 + i * 460, 600, `APP${n}`);
+      net.connect(client, 'eth0', node, 'Gi0/3');
+      net.connect(server, 'eth0', node, 'Gi0/4');
+      client.setIp(`10.244.10.${10 + n}`, 24, null);
+      server.setIp(`10.244.10.${20 + n}`, 24, null);
+      endpoints.push(client, server);
+      // Vlan101/102/103 is the VTEP source interface; static peers form the
+      // deliberately simplified VXLAN control plane.
+      node.stack.configureVxlan(10100, 10, `Vlan${vlanS1}`,
+        nodes.filter(other => other !== node).map((_, j) => ({ vtep: `172.16.${j < i ? j + 1 : j + 2}.1` })));
+      ospf(node);
+    }
+    ospf(spine1);
+    ospf(spine2);
+
+    for (let i = 0; i < nodes.length; i++) {
+      const group = net.createGroup(`Site ${i + 1} / VTEP${i + 1}`, [nodes[i], endpoints[i * 2], endpoints[i * 2 + 1]]);
+      group.x = nodes[i].x; group.y = 470;
+    }
+  }
+
   NetSim.Network = Network;
   NetSim.deviceTypes = TYPES;
   NetSim.buildFabric = buildFabric;
@@ -587,5 +651,6 @@
     { id: 'ha-dc', nameKey: 'topo.sample.haDc', name: 'サンプル3: 冗長GW+LB+DHCP (VRRP)', build: sampleHaDc },
     { id: 'fabric', nameKey: 'topo.sample.fabric', name: 'サンプル4: スパイン・リーフ (OSPF+ECMP)', build: (net) => buildFabric(net, { spines: 2, leaves: 3, hostsPerLeaf: 6 }) },
     { id: 'nat', nameKey: 'topo.sample.nat', name: 'サンプル5: NAT/PAT (インターネット共有 + 静的公開)', build: sampleNat },
+    { id: 'vxlan-fabric', nameKey: 'topo.sample.vxlanFabric', name: 'サンプル6: VXLAN テナント・オーバーレイ (デュアルスパイン)', build: sampleVxlanFabric },
   ];
 })(typeof window !== 'undefined' ? window : globalThis);

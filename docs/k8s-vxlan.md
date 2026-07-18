@@ -37,6 +37,11 @@ L3SW(config)# vxlan peer 10.0.10.12
 L3SW(config)# vxlan peer 10.0.10.13
 ```
 
+The toolbar's **Sample 6: VXLAN tenant overlay (dual spine)** provides a
+working three-VTEP example. It stretches VLAN 10 with VNI 10100 between three
+sites, and uses a routed OSPF underlay for the VTEP reachability. Try
+`CLIENT1` → `http get 10.244.10.23` and inspect the UDP/4789 packet record.
+
 ## What this models and what it does not
 
 This models a static VXLAN control plane without Node-local masquerade. In a

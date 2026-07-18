@@ -134,12 +134,16 @@ show vrrp brief
 5. **NAT/PAT (internet sharing + static publishing)** — An internal LAN (10.0.1.0/24) shares a single
    global address via PAT to reach the external web. An internal server is published via static NAT (203.0.113.50).
    Observe the translations with `show ip nat translations`
+6. **VXLAN tenant overlay (dual spine)** — Three VTEPs stretch tenant VLAN 10 (VNI 10100) over a routed
+   OSPF underlay. From `CLIENT1`, run `ping 10.244.10.23` or `http get 10.244.10.23` and inspect the
+   UDP/4789 encapsulation. Run `show vxlan` on a VTEP to see its local VNI/VLAN binding and static peers.
 
 ## Experiment Ideas
 
 - In sample 4, run `traceroute` from several hosts → each flow takes a different spine (ECMP)
 - `shutdown` one spine → OSPF reconverges and connectivity survives via the remaining paths
 - In sample 3, take down RT1 → VRRP failover (you can also see the gratuitous ARP flow)
+- In sample 6, capture a client-to-remote-app flow → the inner Ethernet frame is carried in VXLAN over UDP/4789
 - `http server off` on an LB backend → the health check detects it as DOWN and removes it from distribution
 - Connect two switches with two links → loop-detection warning → resolve it by bundling with `channel-group` (static port-channel)
 

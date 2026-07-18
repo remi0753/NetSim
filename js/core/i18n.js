@@ -75,6 +75,7 @@
     'topo.sample.haDc':   { ja: 'サンプル3: 冗長GW+LB+DHCP (VRRP)', en: 'Sample 3: Redundant GW + LB + DHCP (VRRP)' },
     'topo.sample.fabric': { ja: 'サンプル4: スパイン・リーフ (OSPF+ECMP)', en: 'Sample 4: Spine-leaf (OSPF + ECMP)' },
     'topo.sample.nat':    { ja: 'サンプル5: NAT/PAT (インターネット共有 + 静的公開)', en: 'Sample 5: NAT/PAT (internet sharing + static publish)' },
+    'topo.sample.vxlanFabric': { ja: 'サンプル6: VXLAN テナント・オーバーレイ (デュアルスパイン)', en: 'Sample 6: VXLAN tenant overlay (dual spine)' },
     'topo.groupName':     { ja: 'グループ{0}', en: 'Group {0}' },
     'topo.badFile':       { ja: '不正なファイル形式です', en: 'Invalid file format' },
 
