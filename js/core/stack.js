@@ -497,7 +497,9 @@
 
     /* traceroute using UDP probes + ICMP TTL exceeded */
     traceroute(dst, out, done) {
-      const MAX_HOPS = 16, TIMEOUT = 8000;
+      // per-probe timeout: a deep hop's RTT is 2 links per hop (hubs/switches
+      // double the count) plus ARP resolution stalls on a cold path
+      const MAX_HOPS = 16, TIMEOUT = 4 * MAX_HOPS * this.sim.linkDelay;
       const sim = this.sim;
       out(`traceroute to ${dst}, ${MAX_HOPS} hops max`);
       let ttl = 0;
@@ -506,6 +508,8 @@
 
       this._traceSession = (pkt, icmp) => {
         if (finished || answered) return;
+        // a late reply to an earlier probe must not be credited to this hop
+        if (icmp.orig && icmp.orig.udpDstPort !== 33434 + ttl) return;
         answered = true;
         sim.cancel(hopTimer);
         const rtt = Math.round(sim.time - sentTime);
