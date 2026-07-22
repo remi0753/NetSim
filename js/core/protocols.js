@@ -70,7 +70,8 @@
         case 'tcp':
           inner = `TCP ${l4.srcPort}→${l4.dstPort} [${flagStr(l4.flags)}] seq=${l4.seq}` +
             (l4.flags.includes('ACK') ? ` ack=${l4.ack}` : '') +
-            (l4.data ? ` len=${String(l4.data).length}` : '');
+            (l4.data ? ` len=${String(l4.data).length}` : '') +
+            (l4.cwnd != null ? ` cwnd=${l4.cwnd}` : '');
           break;
         case 'udp':
           if (l4.data && l4.data.dhcp) {
@@ -156,6 +157,8 @@
         title: 'TCP', fields: {
           'Source Port': String(l4.srcPort), 'Destination Port': String(l4.dstPort),
           'Flags': flagStr(l4.flags), 'Seq': String(l4.seq), 'Ack': String(l4.ack),
+          'Sender cwnd (simulated)': l4.cwnd == null ? '(unknown)' : `${l4.cwnd} bytes`,
+          'Bytes in flight (simulated)': l4.bytesInFlight == null ? '(unknown)' : `${l4.bytesInFlight} bytes`,
           'Data': l4.data ? JSON.stringify(String(l4.data).slice(0, 120)) : '(none)',
         }
       });

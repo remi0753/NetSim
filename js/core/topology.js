@@ -112,13 +112,13 @@
       this.emit('topology');
     }
 
-    connect(devA, portA, devB, portB) {
+    connect(devA, portA, devB, portB, opts) {
       const pa = typeof portA === 'string' ? devA.getPort(portA) : portA;
       const pb = typeof portB === 'string' ? devB.getPort(portB) : portB;
       if (!pa || !pb) throw new Error('port not found');
       if (pa.link || pb.link) throw new Error('port already connected');
       if (pa.device === pb.device) throw new Error('cannot connect a device to itself');
-      const link = new NetSim.Link(this.sim, pa, pb);
+      const link = new NetSim.Link(this.sim, pa, pb, opts);
       this.links.push(link);
       this.recomputeStp();
       this.emit('topology');
@@ -298,11 +298,12 @@
 
     serialize() {
       return {
-        app: 'netsim', version: 2,
+        app: 'netsim', version: 3,
         devices: this.devices.map(d => d.serialize()),
         links: this.links.map(l => ({
           a: { dev: l.a.device.name, port: l.a.name },
           b: { dev: l.b.device.name, port: l.b.name },
+          ...l.settings(),
         })),
         groups: this.groups.map(g => ({
           name: g.name, collapsed: g.collapsed, x: g.x, y: g.y,
@@ -324,7 +325,7 @@
       for (const l of data.links || []) {
         const da = this.findByName(l.a.dev), db = this.findByName(l.b.dev);
         if (da && db) {
-          try { this.connect(da, l.a.port, db, l.b.port); } catch (e) { /* skip bad link */ }
+          try { this.connect(da, l.a.port, db, l.b.port, l); } catch (e) { /* skip bad link */ }
         }
       }
       for (const gd of data.groups || []) {

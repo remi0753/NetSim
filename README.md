@@ -23,10 +23,10 @@ python3 -m http.server   # → http://localhost:8000
 
 | Layer | What's implemented |
 |---|---|
-| **L1 Physical** | Cabling, link up/down, `shutdown` / `no shutdown`, repeater hubs |
+| **L1 Physical** | Cabling, link up/down, `shutdown` / `no shutdown`, repeater hubs, per-link bandwidth / latency / jitter / full-duplex FIFO queues |
 | **L2 Data Link** | Ethernet frames, MAC address learning & aging, flooding, 802.1Q VLANs (access/trunk/native VLAN), **STP (root/designated/alternate port selection)**, **static port channels (flow-hash distribution)**, loop safety guard |
 | **L3 Network** | ARP, IPv4 routing (longest-prefix match + administrative distance), static routes, **OSPF-style dynamic routing (multi-area: Hello / area-scoped LSA flooding / ABR summaries / SPF)**, **ECMP (flow-hash distribution over equal-cost paths)**, TTL decrement, ICMP, inter-VLAN routing via SVIs, **VRRP (virtual IP / virtual MAC / preempt)**, **DHCP (client / server / `ip helper-address` relay)**, router-only **NAT/PAT (inside/outside interfaces, static NAT, interface overload = PAT, proxy-ARP for static publishing)**, **VXLAN (inner Ethernet over UDP/4789, static VTEP peers)** |
-| **L4 Transport** | TCP (three-way handshake, FIN/RST), UDP, a simple HTTP server/client, extended ACLs, **L4 load balancer (round-robin + health checks)** |
+| **L4 Transport** | TCP (three-way handshake, FIN/RST, MSS segmentation, congestion window, slow start/AIMD, timeout retransmission), UDP, a simple HTTP server/client, extended ACLs, **L4 load balancer (round-robin + health checks)** |
 
 ### Devices
 
@@ -152,6 +152,7 @@ show vrrp brief
 ```bash
 node tests/run.js       # core-engine tests (L1–L4 / OSPF / ECMP / DHCP / VRRP / VXLAN / LB / NAT / performance)
 node tests/browser.js   # 28 UI tests on headless Chrome (requires: npm i puppeteer-core)
+node tools/profile-sim.js # 200-host event/link/SPF performance breakdown
 ```
 
 ## Project Structure
@@ -179,8 +180,14 @@ tests/                Node tests and browser tests
 - OSPF supports area IDs `0`–`4294967295`; non-backbone areas exchange routes through an ABR connected to area 0. There is no DR election, and SPF treats subnets as pseudo-nodes. Stub/NSSA areas, virtual links, route filtering, and LSA types other than the simulator's router/summary model are not implemented
 - Port channels are static (`channel-group <n> mode on`); LACP negotiation/LACPDU is not implemented
 - STP defaults to a Rapid PVST+ equivalent (one tree per VLAN); `spanning-tree mode rstp` selects a common tree. Both converge immediately after a topology change and omit BPDU timing, listening/learning timer states, and MSTP
-- TCP is a simplified implementation with no retransmission or window control
+- TCP uses a deliberately compact Reno-like model: MSS segmentation, a congestion window,
+  slow start / additive increase, RTT-based RTO, and timeout retransmission. It omits SACK,
+  fast retransmit/recovery, receiver-window flow control, and several production TCP edge cases
 - NAT is "inside source" direction only (static NAT + interface overload = PAT). Dynamic NAT pools, `outside source`, and per-port static NAT are not implemented
 - IPv6 / BGP are not implemented
-- Link latency is a uniform 450ms (simulation time) so you can follow packets by eye. The speed slider goes up to 64x
+- Links default to a 1 Gbps LAN with 1ms one-way latency. Each full-duplex direction has its own
+  bandwidth-limited FIFO; bandwidth, latency, jitter, and queue depth can be edited per link with
+  LAN/metro/WAN/mobile/satellite presets. The toolbar also provides a global actual-latency floor
+  (100ms by default): effective one-way latency is `max(link latency, global floor)`, and setting it
+  to 0 uses the individual link values unchanged. The speed slider goes up to 64x
 - `shutdown all` / `no shutdown all` are simulator-only convenience commands for fault injection, not IOS commands

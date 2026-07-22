@@ -184,6 +184,13 @@
 
     _renderLink(link) {
       const b = this.body;
+      const presets = {
+        lan: { bandwidthMbps: 1000, latencyMs: 1, jitterMs: 0, queueLimitPackets: 64 },
+        metro: { bandwidthMbps: 1000, latencyMs: 5, jitterMs: 1, queueLimitPackets: 64 },
+        wan: { bandwidthMbps: 100, latencyMs: 40, jitterMs: 5, queueLimitPackets: 64 },
+        mobile: { bandwidthMbps: 20, latencyMs: 60, jitterMs: 15, queueLimitPackets: 32 },
+        satellite: { bandwidthMbps: 25, latencyMs: 300, jitterMs: 20, queueLimitPackets: 64 },
+      };
       b.innerHTML = `
         <h3>${t('insp.link.title')}</h3>
         <div class="dev-type">${t('insp.link.type')}</div>
@@ -194,7 +201,50 @@
             <tr><td>${esc(link.b.device.name)}</td><td>${esc(link.b.shortName)}</td><td>${statusHtml(link.b)}</td></tr>
           </table>
         </div>
+        <div class="insp-section">
+          <div class="sec-title">${t('insp.link.network')}</div>
+          <div class="insp-row"><label>${t('insp.link.profile')}</label><select id="link-profile">
+            <option value="custom">${t('insp.link.custom')}</option>
+            <option value="lan">${t('insp.link.lan')}</option>
+            <option value="metro">${t('insp.link.metro')}</option>
+            <option value="wan">${t('insp.link.wan')}</option>
+            <option value="mobile">${t('insp.link.mobile')}</option>
+            <option value="satellite">${t('insp.link.satellite')}</option>
+          </select></div>
+          <div class="insp-row"><label>${t('insp.link.bandwidth')}</label><input id="link-bw" type="number" min="0.001" step="any" value="${link.bandwidthMbps}"></div>
+          <div class="insp-row"><label>${t('insp.link.latency')}</label><input id="link-latency" type="number" min="0" step="any" value="${link.latencyMs}"></div>
+          <div class="insp-row"><label>${t('insp.link.jitter')}</label><input id="link-jitter" type="number" min="0" step="any" value="${link.jitterMs}"></div>
+          <div class="insp-row"><label>${t('insp.link.queue')}</label><input id="link-queue" type="number" min="0" step="1" value="${link.queueLimitPackets}"></div>
+          <div class="insp-row"><button class="insp-btn primary" id="link-apply">${t('insp.apply')}</button><span class="insp-note" id="link-msg"></span></div>
+          <div class="insp-note">${t('insp.link.effective', link.latencyMs, link.sim.baseLatencyMs, Math.max(link.latencyMs, link.sim.baseLatencyMs))}</div>
+          <div class="insp-note">${t('insp.link.drops', link.droppedFrames)}</div>
+        </div>
         <button class="insp-btn danger" id="ins-del-link">${t('insp.link.del')}</button>`;
+      const setInputs = (v) => {
+        b.querySelector('#link-bw').value = v.bandwidthMbps;
+        b.querySelector('#link-latency').value = v.latencyMs;
+        b.querySelector('#link-jitter').value = v.jitterMs;
+        b.querySelector('#link-queue').value = v.queueLimitPackets;
+      };
+      b.querySelector('#link-profile').addEventListener('change', (e) => {
+        if (presets[e.target.value]) setInputs(presets[e.target.value]);
+      });
+      b.querySelector('#link-apply').addEventListener('click', () => {
+        const values = {
+          bandwidthMbps: Number(b.querySelector('#link-bw').value),
+          latencyMs: Number(b.querySelector('#link-latency').value),
+          jitterMs: Number(b.querySelector('#link-jitter').value),
+          queueLimitPackets: Number(b.querySelector('#link-queue').value),
+        };
+        const valid = Number.isFinite(values.bandwidthMbps) && values.bandwidthMbps > 0 &&
+          Number.isFinite(values.latencyMs) && values.latencyMs >= 0 &&
+          Number.isFinite(values.jitterMs) && values.jitterMs >= 0 &&
+          Number.isInteger(values.queueLimitPackets) && values.queueLimitPackets >= 0;
+        if (!valid) { b.querySelector('#link-msg').textContent = t('insp.link.bad'); return; }
+        link.configure(values);
+        this.app.net.emit('changed');
+        this.render({ link });
+      });
       b.querySelector('#ins-del-link').addEventListener('click', () => {
         this.app.net.removeLink(link);
         this.app.select(null);

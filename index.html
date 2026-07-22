@@ -23,6 +23,10 @@
       <input id="speed" type="range" min="-2" max="6" step="1" value="0">
       <span id="speed-val">x1</span>
     </label>
+    <label class="base-latency-label" data-i18n-title="tb.baseLatency.t" title="全リンクの実通信に適用する片方向latencyの下限。0msでリンク個別値のみ使用">
+      <span data-i18n="tb.baseLatency">通信latency基準</span>
+      <input id="base-latency" type="number" min="0" max="10000" step="10" value="100"> ms
+    </label>
     <span id="sim-clock" data-i18n-title="tb.clock.t" title="シミュレーション時刻">0.0s</span>
   </div>
 

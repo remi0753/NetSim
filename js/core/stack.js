@@ -6,9 +6,9 @@
   const pdu = NetSim.pdu;
   const BC = NetSim.BROADCAST_MAC;
 
-  /* timeouts sized for the visual link delay (450ms/hop): a 4-link RTT is ~3.6s */
   const ARP_TIMEOUT = 3000, ARP_RETRIES = 2, ARP_AGE = 240000;
   const PING_TIMEOUT = 20000, TCP_SYN_TIMEOUT = 8000, TCP_SYN_RETRIES = 2;
+  const TCP_MSS = 1200, TCP_INITIAL_RTO = 1000, TCP_MAX_RETRIES = 6;
 
   class L3Interface {
     constructor(stack, name, mac, hooks) {
@@ -499,7 +499,7 @@
     traceroute(dst, out, done) {
       // per-probe timeout: a deep hop's RTT is 2 links per hop (hubs/switches
       // double the count) plus ARP resolution stalls on a cold path
-      const MAX_HOPS = 16, TIMEOUT = 4 * MAX_HOPS * this.sim.linkDelay;
+      const MAX_HOPS = 16, TIMEOUT = Math.max(5000, 4 * MAX_HOPS * this.sim.linkDelay);
       const sim = this.sim;
       out(`traceroute to ${dst}, ${MAX_HOPS} hops max`);
       let ttl = 0;
@@ -736,22 +736,20 @@
         key: this._tcpKey(lip, lport, rip, rport),
         localIp: lip, localPort: lport, remoteIp: rip, remotePort: rport,
         state: 'CLOSED', iss: 0, seq: 0, ack: 0, cbs: cbs || {},
+        mss: TCP_MSS, cwnd: TCP_MSS, ssthresh: 8 * TCP_MSS,
+        bytesInFlight: 0, sendQueue: '', unacked: new Map(),
+        srtt: null, rttvar: null, rto: TCP_INITIAL_RTO,
+        closeRequested: false, finSeq: null,
         send(data) {
           if (this.state !== 'ESTABLISHED') return false;
-          stack._tcpSend(this, ['PSH', 'ACK'], String(data));
-          this.seq += String(data).length;
+          this.sendQueue += String(data);
+          stack._tcpFlush(this);
           return true;
         },
         close() {
-          if (this.state === 'ESTABLISHED') {
-            stack._tcpSend(this, ['FIN', 'ACK'], null);
-            this.seq++;
-            this.state = 'FIN_WAIT_1';
-          } else if (this.state === 'CLOSE_WAIT') {
-            stack._tcpSend(this, ['FIN', 'ACK'], null);
-            this.seq++;
-            this.state = 'LAST_ACK';
-          }
+          if (this.state !== 'ESTABLISHED' && this.state !== 'CLOSE_WAIT') return;
+          this.closeRequested = true;
+          stack._tcpMaybeClose(this);
         },
       };
       this.tcpConns.set(conn.key, conn);
@@ -763,10 +761,107 @@
     }
     _tcpSendRaw(conn, flags, seq, ack, data) {
       const seg = pdu.tcp(conn.localPort, conn.remotePort, flags, seq, ack, data);
+      // Simulator-only observability fields; these are not TCP header fields.
+      seg.cwnd = Math.round(conn.cwnd);
+      seg.bytesInFlight = conn.bytesInFlight;
       this.sendIp(pdu.ipv4(conn.localIp, conn.remoteIp, 'tcp', seg), {
         onArpFail: () => { if (conn.cbs.onError) conn.cbs.onError('host unreachable'); },
         onNoRoute: () => { if (conn.cbs.onError) conn.cbs.onError('no route to host'); },
       });
+    }
+
+    _tcpFlush(conn) {
+      if (conn.state !== 'ESTABLISHED' || !conn.sendQueue) {
+        this._tcpMaybeClose(conn);
+        return;
+      }
+      let allowance = Math.max(0, Math.floor(conn.cwnd - conn.bytesInFlight));
+      while (conn.sendQueue && allowance > 0) {
+        const len = Math.min(conn.mss, allowance, conn.sendQueue.length);
+        if (len <= 0) break;
+        const data = conn.sendQueue.slice(0, len);
+        conn.sendQueue = conn.sendQueue.slice(len);
+        const rec = {
+          seq: conn.seq, data, len, retries: 0, timer: null,
+          sentAt: this.sim.time, retransmitted: false,
+        };
+        conn.seq += len;
+        conn.bytesInFlight += len;
+        conn.unacked.set(rec.seq, rec);
+        this._tcpTransmitData(conn, rec);
+        allowance -= len;
+      }
+    }
+
+    _tcpTransmitData(conn, rec) {
+      this._tcpSendRaw(conn, ['PSH', 'ACK'], rec.seq, conn.ack, rec.data);
+      rec.sentAt = this.sim.time;
+      this.sim.cancel(rec.timer);
+      rec.timer = this.sim.schedule(conn.rto, () => {
+        if (!conn.unacked.has(rec.seq) || conn.state === 'CLOSED') return;
+        if (rec.retries++ >= TCP_MAX_RETRIES) {
+          this._tcpAbort(conn, 'connection timed out');
+          return;
+        }
+        conn.ssthresh = Math.max(2 * conn.mss, Math.floor(conn.cwnd / 2));
+        conn.cwnd = conn.mss;
+        conn.rto = Math.min(60000, conn.rto * 2);
+        rec.retransmitted = true;
+        this.sim.note('tcp', `TCP timeout ${conn.localIp}:${conn.localPort}; cwnd=${conn.cwnd}`);
+        this._tcpTransmitData(conn, rec);
+      });
+    }
+
+    _tcpAckData(conn, ack) {
+      let acked = 0;
+      for (const [seq, rec] of conn.unacked) {
+        if (seq + rec.len > ack) continue;
+        this.sim.cancel(rec.timer);
+        conn.unacked.delete(seq);
+        conn.bytesInFlight = Math.max(0, conn.bytesInFlight - rec.len);
+        acked += rec.len;
+        if (!rec.retransmitted) {
+          const sample = Math.max(1, this.sim.time - rec.sentAt);
+          if (conn.srtt == null) {
+            conn.srtt = sample;
+            conn.rttvar = sample / 2;
+          } else {
+            conn.rttvar = 0.75 * conn.rttvar + 0.25 * Math.abs(conn.srtt - sample);
+            conn.srtt = 0.875 * conn.srtt + 0.125 * sample;
+          }
+          conn.rto = Math.min(60000, Math.max(200, conn.srtt + 4 * conn.rttvar));
+        }
+      }
+      if (!acked) return;
+      if (conn.cwnd < conn.ssthresh) conn.cwnd += acked;
+      else conn.cwnd += conn.mss * acked / conn.cwnd;
+      this._tcpFlush(conn);
+      this._tcpMaybeClose(conn);
+    }
+
+    _tcpMaybeClose(conn) {
+      if (!conn.closeRequested || conn.sendQueue || conn.unacked.size) return;
+      if (conn.state !== 'ESTABLISHED' && conn.state !== 'CLOSE_WAIT') return;
+      const fromEstablished = conn.state === 'ESTABLISHED';
+      conn.finSeq = conn.seq;
+      this._tcpSend(conn, ['FIN', 'ACK'], null);
+      conn.seq++;
+      conn.state = fromEstablished ? 'FIN_WAIT_1' : 'LAST_ACK';
+    }
+
+    _tcpCleanup(conn) {
+      this.sim.cancel(conn.synTimer);
+      for (const rec of conn.unacked.values()) this.sim.cancel(rec.timer);
+      conn.unacked.clear();
+      conn.bytesInFlight = 0;
+    }
+
+    _tcpAbort(conn, reason) {
+      if (conn.state === 'CLOSED') return;
+      this._tcpCleanup(conn);
+      conn.state = 'CLOSED';
+      this.tcpConns.delete(conn.key);
+      if (conn.cbs.onError) conn.cbs.onError(reason);
     }
 
     _onTcp(iface, pkt) {
@@ -795,11 +890,14 @@
 
       if (F('RST')) {
         const wasSyn = conn.state === 'SYN_SENT';
+        this._tcpCleanup(conn);
         conn.state = 'CLOSED';
         this.tcpConns.delete(conn.key);
         if (conn.cbs.onError) conn.cbs.onError(wasSyn ? 'connection refused' : 'connection reset by peer');
         return;
       }
+
+      if (F('ACK')) this._tcpAckData(conn, seg.ack);
 
       switch (conn.state) {
         case 'SYN_SENT':
@@ -819,9 +917,15 @@
           break;
         case 'ESTABLISHED':
           if (seg.data != null && String(seg.data).length) {
-            conn.ack = seg.seq + String(seg.data).length;
+            const data = String(seg.data);
+            if (seg.seq !== conn.ack) {
+              // Duplicate or out-of-order data: cumulative ACK asks for conn.ack.
+              this._tcpSend(conn, ['ACK'], null);
+              break;
+            }
+            conn.ack = seg.seq + data.length;
             this._tcpSend(conn, ['ACK'], null);
-            if (conn.cbs.onData) conn.cbs.onData(String(seg.data), conn);
+            if (conn.cbs.onData) conn.cbs.onData(data, conn);
           }
           if (F('FIN')) {
             conn.ack = seg.seq + (seg.data ? String(seg.data).length : 0) + 1;
@@ -836,9 +940,9 @@
           if (F('FIN')) {
             conn.ack = seg.seq + 1;
             this._tcpSend(conn, ['ACK'], null);
-            conn.state = F('ACK') ? 'TIME_WAIT' : 'CLOSING';
+            conn.state = F('ACK') && seg.ack >= conn.finSeq + 1 ? 'TIME_WAIT' : 'CLOSING';
             this._tcpTimeWait(conn);
-          } else if (F('ACK')) {
+          } else if (F('ACK') && seg.ack >= conn.finSeq + 1) {
             conn.state = 'FIN_WAIT_2';
           }
           break;
@@ -859,7 +963,8 @@
           if (F('ACK')) { conn.state = 'TIME_WAIT'; this._tcpTimeWait(conn); }
           break;
         case 'LAST_ACK':
-          if (F('ACK')) {
+          if (F('ACK') && seg.ack >= conn.finSeq + 1) {
+            this._tcpCleanup(conn);
             conn.state = 'CLOSED';
             this.tcpConns.delete(conn.key);
             if (conn.cbs.onClose) conn.cbs.onClose(conn);
@@ -869,6 +974,7 @@
     }
     _tcpTimeWait(conn) {
       this.sim.schedule(3000, () => {
+        this._tcpCleanup(conn);
         conn.state = 'CLOSED';
         this.tcpConns.delete(conn.key);
         if (conn.cbs.onClose) conn.cbs.onClose(conn);

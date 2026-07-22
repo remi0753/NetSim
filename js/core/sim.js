@@ -54,7 +54,13 @@
       this._heap = new EventHeap();
       this._eseq = 0;
       this.transmissions = [];    // in-flight frames, for animation
-      this.linkDelay = 450;       // sim-ms one link traversal
+      this.captureTransmissions = true;
+      // Global lower bound for actual one-way link propagation. Individual
+      // links may specify a higher latency; 0 uses link values unchanged.
+      this.baseLatencyMs = 100;
+      // Compatibility fallback for callers that do not have a Link instance.
+      // Actual links carry their own propagation delay and bandwidth settings.
+      this.linkDelay = 1;
     }
 
     schedule(delay, fn) {
@@ -87,11 +93,19 @@
     }
 
     /* register an in-flight frame (animation + packet log) */
-    addTransmission(link, fromPort, frame) {
+    addTransmission(link, fromPort, frame, timing) {
+      if (!this.captureTransmissions) return null;
+      timing = timing || {};
+      const tStart = timing.tStart == null ? this.time : timing.tStart;
+      const tArrival = timing.tEnd == null ? tStart + this.linkDelay : timing.tEnd;
       const tx = {
         id: NetSim.nextId('tx'),
         link, fromPort, frame,
-        tStart: this.time, tEnd: this.time + this.linkDelay,
+        tStart, tEnd: Math.max(tStart + 0.001, tArrival),
+        tArrival,
+        bytes: timing.bytes || null,
+        serializationMs: timing.serializationMs || 0,
+        propagationMs: timing.propagationMs == null ? this.linkDelay : timing.propagationMs,
       };
       this.transmissions.push(tx);
       this.emit('frame', tx);

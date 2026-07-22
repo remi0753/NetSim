@@ -971,5 +971,122 @@ section('STP: 並列リンクのループ防止');
   ok(!looped, 'STPがブロードキャストストームを発生前に遮断');
 }
 
+/* ---------- link characteristics ---------- */
+section('リンク: bandwidth / latency / FIFO');
+{
+  const { sim, net } = fresh();
+  const a = net.addDevice('pc', 0, 0, 'A'), b = net.addDevice('pc', 0, 0, 'B');
+  const link = net.connect(a, 'eth0', b, 'eth0', {
+    bandwidthMbps: 0.008, latencyMs: 20, jitterMs: 0, queueLimitPackets: 1,
+  });
+  const arrived = [];
+  b.receiveFrame = (_port, frame) => arrived.push({ at: sim.time, marker: frame.payload.marker });
+  const frame = marker => NetSim.pdu.eth(a.nic.mac, b.nic.mac, 'test', { marker, pad: 'x'.repeat(100) });
+  link.transmit(a.nic, frame(1));
+  link.transmit(a.nic, frame(2));
+  link.transmit(a.nic, frame(3));
+  ok(sim._heap.size === 2, 'FIFO待ち専用イベントを作らず配送イベントだけを予約する');
+  sim.advance(1000);
+  ok(arrived.length === 2 && arrived[0].marker === 1 && arrived[1].marker === 2,
+    '方向別FIFOが到着順を維持する');
+  ok(link.droppedFrames === 1, 'FIFO上限を超えたフレームをtail dropする');
+  ok(arrived[0].at >= 100 && arrived[1].at > arrived[0].at,
+    'bandwidthの直列化遅延と伝搬latencyが反映される');
+
+  const saved = JSON.parse(JSON.stringify(net.serialize()));
+  const sim2 = new NetSim.Simulator(), net2 = new NetSim.Network(sim2);
+  net2.load(saved);
+  const restored = net2.links[0];
+  ok(restored.bandwidthMbps === 0.008 && restored.latencyMs === 20 &&
+    restored.jitterMs === 0 && restored.queueLimitPackets === 1,
+  'リンク特性が保存・復元される');
+}
+
+{
+  const { sim, net } = fresh();
+  const a = net.addDevice('pc', 0, 0, 'VIS-A'), b = net.addDevice('pc', 0, 0, 'VIS-B');
+  const link = net.connect(a, 'eth0', b, 'eth0', { latencyMs: 1 });
+  let delivered = 0;
+  b.receiveFrame = () => { delivered++; };
+  sim.baseLatencyMs = 200;
+  link.transmit(a.nic, NetSim.pdu.eth(a.nic.mac, b.nic.mac, 'test', { marker: 1 }));
+  const tx = sim.transmissions[0];
+  ok(tx && tx.propagationMs === 200 && tx.tArrival > 200 && tx.tArrival < 201,
+    '通信latency基準を実際のリンク配送時間へ適用する');
+  sim.advance(199);
+  ok(delivered === 0, '通信latency基準より前には配送しない');
+  sim.advance(2);
+  ok(delivered === 1 && sim.transmissions.length === 0,
+    '通信latency基準を経過すると配送・描画を完了する');
+}
+
+{
+  const { sim, net } = fresh();
+  const a = net.addDevice('pc', 0, 0, 'NO-CAP-A'), b = net.addDevice('pc', 0, 0, 'NO-CAP-B');
+  const link = net.connect(a, 'eth0', b, 'eth0');
+  let delivered = 0, observed = 0;
+  b.receiveFrame = () => { delivered++; };
+  sim.on('frame', () => { observed++; });
+  sim.captureTransmissions = false;
+  link.transmit(a.nic, NetSim.pdu.eth(a.nic.mac, b.nic.mac, 'test', { marker: 1 }));
+  ok(sim.transmissions.length === 0 && observed === 0,
+    'capture無効時は描画情報とframe通知を生成しない');
+  sim.advance(101);
+  ok(delivered === 1, 'capture無効でもシミュレーション配送は継続する');
+}
+
+/* ---------- TCP congestion window ---------- */
+section('TCP: congestion window / segmentation');
+{
+  const { sim, net } = fresh();
+  const client = net.addDevice('pc', 0, 0, 'CLIENT');
+  const server = net.addDevice('server', 0, 0, 'SERVER');
+  net.connect(client, 'eth0', server, 'eth0');
+  client.setIp('10.9.0.1', 24, null);
+  server.setIp('10.9.0.2', 24, null);
+  let received = '', opened = null, initial = null;
+  server.stack.tcpListen(9000, conn => {
+    conn.cbs.onData = data => { received += data; };
+  });
+  client.stack.tcpConnect('10.9.0.2', 9000, {
+    onOpen: conn => {
+      opened = conn;
+      conn.send('z'.repeat(5000));
+      initial = { cwnd: conn.cwnd, inFlight: conn.bytesInFlight, queued: conn.sendQueue.length };
+    },
+  });
+  sim.advance(30000);
+  ok(initial && initial.cwnd === 1200 && initial.inFlight === 1200 && initial.queued === 3800,
+    '初期cwnd 1 MSSだけを送信し、残りを送信待ちにする');
+  ok(received.length === 5000 && opened && opened.unacked.size === 0,
+    'MSS分割したTCPストリームをACK駆動で全量配送する');
+  ok(opened && opened.cwnd > 1200 && opened.srtt != null && opened.rto >= 200,
+    'ACKでcwndを増加し、RTTからRTOを更新する');
+}
+
+section('TCP: FIFO dropからのtimeout再送');
+{
+  const { sim, net } = fresh();
+  const client = net.addDevice('pc', 0, 0, 'SLOW-CLIENT');
+  const server = net.addDevice('server', 0, 0, 'SLOW-SERVER');
+  const bottleneck = net.connect(client, 'eth0', server, 'eth0', {
+    bandwidthMbps: 0.02, latencyMs: 10, jitterMs: 0, queueLimitPackets: 0,
+  });
+  client.setIp('10.10.0.1', 24, null);
+  server.setIp('10.10.0.2', 24, null);
+  let received = '', timeouts = 0;
+  sim.on('note', note => { if (note.kind === 'tcp') timeouts++; });
+  server.stack.tcpListen(9001, conn => {
+    conn.cbs.onData = data => { received += data; };
+  });
+  client.stack.tcpConnect('10.10.0.2', 9001, {
+    onOpen: conn => conn.send('q'.repeat(3600)),
+  });
+  sim.advance(120000);
+  ok(bottleneck.droppedFrames > 0 && timeouts > 0,
+    '小さいFIFOのtail dropを検出しcwndを戻してtimeout再送する');
+  ok(received.length === 3600, 'drop後も累積ACKと再送でTCPストリームを復元する');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

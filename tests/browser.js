@@ -48,11 +48,26 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
     devEls: document.querySelectorAll('.dev-box').length,
     linkEls: document.querySelectorAll('.link-g').length,
     palItems: document.querySelectorAll('.pal-item').length,
+    baseLatency: Number(document.getElementById('base-latency').value),
+    simBaseLatency: window.netsimApp ? window.netsimApp.sim.baseLatencyMs : null,
   }));
   ok(boot.hasApp, 'アプリ起動');
   ok(boot.devices === 6 && boot.devEls === 6, `サンプル構成のデバイス描画 (${boot.devEls}/6)`);
   ok(boot.links === 5 && boot.linkEls === 5, `リンク描画 (${boot.linkEls}/5)`);
   ok(boot.palItems === 7, 'パレットに7種のデバイス (LB含む)');
+  ok(boot.baseLatency === 100 && boot.simBaseLatency === 100,
+    '通信latency基準のUI初期値は100ms');
+  const changedBaseLatency = await page.evaluate(() => {
+    const input = document.getElementById('base-latency');
+    input.value = '250';
+    input.dispatchEvent(new Event('change'));
+    return {
+      sim: window.netsimApp.sim.baseLatencyMs,
+      saved: localStorage.getItem('netsim.baseLatencyMs'),
+    };
+  });
+  ok(changedBaseLatency.sim === 250 && changedBaseLatency.saved === '250',
+    '通信latency基準をUIから変更・保存');
 
   // 2. terminal ping across the router (clock sped up)
   await page.evaluate(() => {
@@ -380,6 +395,20 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   ok(dropped.added, 'パレットからドラッグ&ドロップで配置');
   ok(dropped.portCount === 6, '指定したインターフェース数でルータを配置');
   ok(dropped.strayPrevented, '無関係なドロップはナビゲーションを抑止 (Unsafe URL対策)');
+
+  // 17. packet-log bursts are retained and painted as one bounded batch
+  await page.evaluate(() => {
+    const sim = window.netsimApp.sim;
+    for (let i = 0; i < 800; i++) sim.note('batch-test', 'BATCH-' + i);
+  });
+  await new Promise(r => setTimeout(r, 100));
+  const batchedLog = await page.evaluate(() => ({
+    rows: document.querySelectorAll('#pl-rows .pl-row').length,
+    entries: window.netsimApp.packetLog.entries.length,
+    last: document.querySelector('#pl-rows .pl-row:last-child .pl-sum').textContent,
+  }));
+  ok(batchedLog.rows === 500 && batchedLog.entries === 500 && batchedLog.last === 'BATCH-799',
+    '大量ログを500件のring bufferにまとめて描画');
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (errors.length) {

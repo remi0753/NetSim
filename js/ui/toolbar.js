@@ -6,6 +6,7 @@
 
   const LS_KEY = 'netsim.save';
   const LS_AUTO = 'netsim.autosave';
+  const LS_BASE_LATENCY = 'netsim.baseLatencyMs';
 
   class Toolbar {
     constructor(app) {
@@ -30,6 +31,32 @@
       };
       speedEl.addEventListener('input', applySpeed);
       applySpeed();
+
+      // Actual one-way propagation floor shared by every link. Per-link
+      // latency remains configurable and wins when it is higher.
+      const baseLatencyEl = $('base-latency');
+      let savedBaseLatency = null;
+      try {
+        const raw = localStorage.getItem(LS_BASE_LATENCY);
+        if (raw != null) savedBaseLatency = Number(raw);
+      } catch (_) {}
+      if (Number.isFinite(savedBaseLatency) && savedBaseLatency >= 0 && savedBaseLatency <= 10000) {
+        app.sim.baseLatencyMs = savedBaseLatency;
+      }
+      baseLatencyEl.value = app.sim.baseLatencyMs;
+      const applyBaseLatency = () => {
+        const value = Number(baseLatencyEl.value);
+        if (!Number.isFinite(value) || value < 0 || value > 10000) {
+          baseLatencyEl.value = app.sim.baseLatencyMs;
+          return;
+        }
+        app.sim.baseLatencyMs = value;
+        try { localStorage.setItem(LS_BASE_LATENCY, String(value)); } catch (_) {}
+      };
+      baseLatencyEl.addEventListener('change', applyBaseLatency);
+      baseLatencyEl.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { applyBaseLatency(); baseLatencyEl.blur(); }
+      });
 
       this.clockEl = $('sim-clock');
 

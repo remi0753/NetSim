@@ -807,6 +807,7 @@
       const perLink = new Map();
       const overflow = new Map();   // linkId -> {x, y, n}
       for (const tx of txs) {
+        if (now < tx.tStart) continue; // queued but serialization has not started
         const link = tx.link;
         const from = this.devicePos(tx.fromPort.device);
         const to = this.devicePos(link.other(tx.fromPort).device);
