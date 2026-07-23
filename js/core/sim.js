@@ -57,7 +57,7 @@
       this.captureTransmissions = true;
       // Global lower bound for actual one-way link propagation. Individual
       // links may specify a higher latency; 0 uses link values unchanged.
-      this.baseLatencyMs = 100;
+      this.baseLatencyMs = 0;
       // Compatibility fallback for callers that do not have a Link instance.
       // Actual links carry their own propagation delay and bandwidth settings.
       this.linkDelay = 1;
@@ -104,6 +104,7 @@
         tStart, tEnd: Math.max(tStart + 0.001, tArrival),
         tArrival,
         bytes: timing.bytes || null,
+        packets: timing.packets || 1,
         serializationMs: timing.serializationMs || 0,
         propagationMs: timing.propagationMs == null ? this.linkDelay : timing.propagationMs,
       };

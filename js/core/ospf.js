@@ -227,7 +227,11 @@
         for (const lsa of p.lsas || []) {
           if (lsa.area !== area) continue;
           if (lsa.routerId === this.routerId) {
-            if (lsa.seq >= this.seq) { this.seq = lsa.seq; this._originate(); }
+            // A copy of our current LSA can legitimately return through a
+            // redundant path.  Only a strictly newer self-originated LSA
+            // requires fight-back; treating an equal copy as newer creates an
+            // endless sequence-number/flooding storm on cyclic topologies.
+            if (lsa.seq > this.seq) { this.seq = lsa.seq; this._originate(); }
             continue;
           }
           const key = this._lsaKey(area, lsa.routerId), cur = this.lsdb.get(key);
@@ -245,8 +249,13 @@
         }
       } else if (p.type === 'purge') {
         if (p.routerId === this.routerId) {
-          if (p.seq >= this.seq) this.seq = p.seq;
-          this._originate();
+          // As with LSUs, an equal-sequence purge may be a returned copy of
+          // our own flood.  Fight back only when another router presents a
+          // sequence number newer than the one we currently own.
+          if (p.seq > this.seq) {
+            this.seq = p.seq;
+            this._originate();
+          }
           return;
         }
         const key = this._lsaKey(area, p.routerId), cur = this.lsdb.get(key);

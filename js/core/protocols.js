@@ -37,7 +37,7 @@
   }
 
   function tcp(srcPort, dstPort, flags, seq, ack, data) {
-    return { l4: 'tcp', srcPort, dstPort, flags, seq, ack, data: data || null };
+    return { l4: 'tcp', srcPort, dstPort, flags, seq, ack, data: data == null ? null : data };
   }
 
   /* ---------- decoding for logs / UI ---------- */
@@ -70,7 +70,11 @@
         case 'tcp':
           inner = `TCP ${l4.srcPort}→${l4.dstPort} [${flagStr(l4.flags)}] seq=${l4.seq}` +
             (l4.flags.includes('ACK') ? ` ack=${l4.ack}` : '') +
-            (l4.data ? ` len=${String(l4.data).length}` : '') +
+            (l4.data ? ` len=${NetSim.payloadLength(l4.data)}` : '') +
+            (l4.data && l4.data.__netsimSegments > 1
+              ? ` batch=${l4.data.__netsimSegments}seg` : '') +
+            (!l4.data && l4.__netsimPackets > 1
+              ? ` batch=${l4.__netsimPackets}pkts` : '') +
             (l4.cwnd != null ? ` cwnd=${l4.cwnd}` : '');
           break;
         case 'udp':
@@ -159,7 +163,11 @@
           'Flags': flagStr(l4.flags), 'Seq': String(l4.seq), 'Ack': String(l4.ack),
           'Sender cwnd (simulated)': l4.cwnd == null ? '(unknown)' : `${l4.cwnd} bytes`,
           'Bytes in flight (simulated)': l4.bytesInFlight == null ? '(unknown)' : `${l4.bytesInFlight} bytes`,
-          'Data': l4.data ? JSON.stringify(String(l4.data).slice(0, 120)) : '(none)',
+          'Data': l4.data && l4.data.__netsimBytes != null
+            ? `(virtual payload: ${l4.data.__netsimBytes} bytes` +
+              (l4.data.__netsimSegments > 1
+                ? ` / ${l4.data.__netsimSegments} segments)` : ')')
+            : (l4.data ? JSON.stringify(String(l4.data).slice(0, 120)) : '(none)'),
         }
       });
     } else if (ip.proto === 'udp') {

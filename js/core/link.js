@@ -8,6 +8,9 @@
     jitterMs: 0,
     queueLimitPackets: 64,
   });
+  const TRAFFIC_BUCKET_MS = 10;
+  const TRAFFIC_HISTORY_MS = 60000;
+  const FORWARDING_TYPES = new Set(['hub', 'switch', 'router', 'l3switch']);
 
   function finiteInRange(value, fallback, min, max) {
     const n = Number(value);
@@ -18,9 +21,26 @@
 
   function dataBytes(data) {
     if (data == null) return 0;
+    if (data && typeof data === 'object' &&
+        Number.isSafeInteger(data.__netsimBytes) && data.__netsimBytes >= 0) {
+      return data.__netsimBytes;
+    }
     const s = typeof data === 'string' ? data : JSON.stringify(data);
     if (utf8Encoder) return utf8Encoder.encode(s).length;
     return unescape(encodeURIComponent(s)).length;
+  }
+
+  function framePackets(frame) {
+    if (!frame || frame.type !== 'ipv4' || !frame.payload) return 1;
+    const ip = frame.payload, l4 = ip.payload || {};
+    if (ip.proto === 'tcp') {
+      const virtual = l4.data && l4.data.__netsimSegments;
+      if (Number.isSafeInteger(virtual) && virtual > 0) return virtual;
+      if (Number.isSafeInteger(l4.__netsimPackets) && l4.__netsimPackets > 0) {
+        return l4.__netsimPackets;
+      }
+    }
+    return 1;
   }
 
   /* Approximate on-wire bytes, including Ethernet overhead and inter-frame gap. */
@@ -28,7 +48,18 @@
     let payload = 28; // ARP-sized fallback
     if (frame && frame.type === 'ipv4' && frame.payload) {
       const ip = frame.payload, l4 = ip.payload || {};
-      if (ip.proto === 'tcp') payload = 20 + 20 + dataBytes(l4.data);
+      if (ip.proto === 'tcp') {
+        const packets = framePackets(frame);
+        const bytes = dataBytes(l4.data);
+        if (packets > 1) {
+          // One event can stand for a group of physical TCP packets. Each
+          // packet still consumes its Ethernet/IP/TCP overhead on the wire.
+          const perPacketOverhead = 78 + (frame.vlan != null ? 4 : 0);
+          return bytes ? bytes + packets * perPacketOverhead : packets * (84 +
+            (frame.vlan != null ? 4 : 0));
+        }
+        payload = 20 + 20 + bytes;
+      }
       else if (ip.proto === 'udp') payload = 20 + 8 + dataBytes(l4.data);
       else if (ip.proto === 'icmp') payload = 20 + 8 + (Number(l4.size) || dataBytes(l4));
       else payload = 20 + dataBytes(l4);
@@ -101,7 +132,7 @@
       if (!state) {
         state = {
           busyUntil: 0,
-          waitingStarts: [],
+          queueEntries: [],
           totalBytes: 0,
           transmissions: [],
         };
@@ -111,13 +142,26 @@
     }
     _pruneQueue(state, now) {
       let count = 0;
-      while (count < state.waitingStarts.length && state.waitingStarts[count] <= now + 1e-9) count++;
-      if (count) state.waitingStarts.splice(0, count);
+      while (count < state.queueEntries.length &&
+             state.queueEntries[count].tEnd <= now + 1e-9) count++;
+      if (count) state.queueEntries.splice(0, count);
+    }
+    _queueDepth(state, now) {
+      this._pruneQueue(state, now);
+      let depth = 0;
+      for (const entry of state.queueEntries) {
+        if (now < entry.tStart) {
+          depth += entry.packets;
+          continue;
+        }
+        const remaining = Math.ceil((entry.tEnd - now) / entry.perPacketMs) - 1;
+        depth += Math.max(0, Math.min(entry.packets, remaining));
+      }
+      return depth;
     }
     queueDepth(fromPort) {
       const state = this._direction(fromPort);
-      this._pruneQueue(state, this.sim.time);
-      return state.waitingStarts.length;
+      return this._queueDepth(state, this.sim.time);
     }
     _directionTraffic(fromPort, windowMs) {
       const state = this._direction(fromPort);
@@ -142,6 +186,30 @@
         rateMbps,
         utilizationPct: Math.min(100, rateMbps / this.bandwidthMbps * 100),
       };
+    }
+    _recordTraffic(state, tStart, tEnd, bytes) {
+      const duration = Math.max(0.001, tEnd - tStart);
+      const first = Math.floor(tStart / TRAFFIC_BUCKET_MS) * TRAFFIC_BUCKET_MS;
+      const last = Math.floor(Math.max(tStart, tEnd - 1e-9) /
+        TRAFFIC_BUCKET_MS) * TRAFFIC_BUCKET_MS;
+      for (let bucket = first; bucket <= last; bucket += TRAFFIC_BUCKET_MS) {
+        const overlap = Math.max(0,
+          Math.min(tEnd, bucket + TRAFFIC_BUCKET_MS) - Math.max(tStart, bucket));
+        if (!overlap) continue;
+        const bucketBytes = bytes * overlap / duration;
+        const tail = state.transmissions[state.transmissions.length - 1];
+        if (tail && tail.tStart === bucket) tail.bytes += bucketBytes;
+        else state.transmissions.push({
+          tStart: bucket,
+          tEnd: bucket + TRAFFIC_BUCKET_MS,
+          bytes: bucketBytes,
+        });
+      }
+      const cutoff = this.sim.time - TRAFFIC_HISTORY_MS;
+      let prune = 0;
+      while (prune < state.transmissions.length &&
+             state.transmissions[prune].tEnd <= cutoff) prune++;
+      if (prune) state.transmissions.splice(0, prune);
     }
     trafficStats(windowMs) {
       const window = finiteInRange(windowMs, 1000, 100, 60000);
@@ -175,31 +243,50 @@
       }
       const now = this.sim.time;
       const bytes = frameBytes(copy);
+      const packets = framePackets(copy);
       const serializationMs = Math.max(0.001, bytes * 8 / (this.bandwidthMbps * 1000));
       const state = this._direction(fromPort);
-      this._pruneQueue(state, now);
+      const queueDepth = this._queueDepth(state, now);
       const tStart = Math.max(now, state.busyUntil);
       const waits = tStart > now + 1e-9;
-      if (waits && state.waitingStarts.length >= this.queueLimitPackets) {
-        this.droppedFrames++;
+      // Aggregated iperf traffic arrives as a packet train. Admit the train
+      // when the FIFO still has space and allow at most one train of bounded
+      // overshoot; requiring room for the whole group would turn a single
+      // queued ACK into an artificial 64-packet tail drop.
+      if (waits && queueDepth >= this.queueLimitPackets) {
+        this.droppedFrames += packets;
         this.sim.note('queue-drop', NetSim.t('net.link.queueDrop',
           fromPort.device.name, fromPort.shortName, this.queueLimitPackets));
         return;
       }
-      if (waits) state.waitingStarts.push(tStart);
       const tSerialized = tStart + serializationMs;
+      if (waits || packets > 1) {
+        state.queueEntries.push({
+          tStart,
+          tEnd: tSerialized,
+          packets,
+          perPacketMs: serializationMs / packets,
+        });
+      }
       const propagationMs = this._sampleLatency();
       const tArrival = tSerialized + propagationMs;
+      const firstArrival = tStart + serializationMs / packets + propagationMs;
+      // A group represents a train of ordinary packets, not one giant frame.
+      // Forwarding devices can start relaying when the first packet arrives,
+      // which pipelines the train across equal-speed hops. End hosts receive
+      // the aggregate only after its final packet has arrived.
+      const deliveryAt = packets > 1 && FORWARDING_TYPES.has(toPort.device.type)
+        ? firstArrival : tArrival;
       state.busyUntil = tSerialized;
       state.totalBytes += bytes;
-      state.transmissions.push({ tStart, tEnd: tSerialized, bytes });
+      this._recordTraffic(state, tStart, tSerialized, bytes);
 
       // Register animation metadata immediately. Canvas hides future-starting
       // entries, avoiding one simulator event per queued frame.
       this.sim.addTransmission(this, fromPort, copy, {
-        tStart, tEnd: tArrival, bytes, serializationMs, propagationMs,
+        tStart, tEnd: tArrival, bytes, packets, serializationMs, propagationMs,
       });
-      this.sim.schedule(tArrival - now, () => {
+      this.sim.schedule(deliveryAt - now, () => {
         if (fromPort.link !== this) return;   // cable was unplugged mid-flight
         if (!this.isUp()) return;
         toPort.device.receiveFrame(toPort, copy);
@@ -215,4 +302,5 @@
   NetSim.Link = Link;
   NetSim.Link.DEFAULTS = DEFAULTS;
   NetSim.frameBytes = frameBytes;
+  NetSim.framePackets = framePackets;
 })(typeof window !== 'undefined' ? window : globalThis);

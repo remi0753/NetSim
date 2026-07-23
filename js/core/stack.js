@@ -8,7 +8,23 @@
 
   const ARP_TIMEOUT = 3000, ARP_RETRIES = 2, ARP_AGE = 240000;
   const PING_TIMEOUT = 20000, TCP_SYN_TIMEOUT = 8000, TCP_SYN_RETRIES = 2;
-  const TCP_MSS = 1200, TCP_INITIAL_RTO = 1000, TCP_MAX_RETRIES = 6;
+  const TCP_MSS = 1200, TCP_INITIAL_RTO = 1000, TCP_MIN_RTO = 200;
+  const TCP_MAX_RTO = 60000, TCP_CLOCK_GRANULARITY = 10, TCP_MAX_RETRIES = 6;
+  const TCP_INITIAL_CWND_SEGMENTS = 10, TCP_DELAYED_ACK_MS = 40;
+  const TCP_PACING_HORIZON_MS = 10;
+  // Synthetic sendBytes() traffic (iperf3) is represented by a bounded group
+  // of physical MSS-sized segments. Routers and links process one event for
+  // the group while wire bytes, ACKs, queue occupancy, and retransmit counts
+  // retain their packet-equivalent values.
+  const TCP_BULK_SEGMENTS = 64;
+
+  function tcpPayloadSegments(data) {
+    if (data && typeof data === 'object' &&
+        Number.isSafeInteger(data.__netsimSegments) && data.__netsimSegments > 0) {
+      return data.__netsimSegments;
+    }
+    return NetSim.payloadLength(data) ? 1 : 0;
+  }
 
   class L3Interface {
     constructor(stack, name, mac, hooks) {
@@ -710,6 +726,7 @@
       conn.state = 'SYN_SENT';
       conn.iss = 1000 + Math.floor(Math.random() * 9000);
       conn.seq = conn.iss;
+      conn.synSentAt = this.sim.time;
       this._tcpSend(conn, ['SYN'], null);
       conn.seq++;   // SYN consumes one
       let tries = 0;
@@ -717,6 +734,7 @@
         conn.synTimer = this.sim.schedule(TCP_SYN_TIMEOUT, () => {
           if (conn.state !== 'SYN_SENT') return;
           if (tries++ < TCP_SYN_RETRIES) {
+            conn.synRetransmitted = true;
             this._tcpSendRaw(conn, ['SYN'], conn.iss, 0, null);
             retry();
           } else {
@@ -736,15 +754,39 @@
         key: this._tcpKey(lip, lport, rip, rport),
         localIp: lip, localPort: lport, remoteIp: rip, remotePort: rport,
         state: 'CLOSED', iss: 0, seq: 0, ack: 0, cbs: cbs || {},
-        mss: TCP_MSS, cwnd: TCP_MSS, ssthresh: 8 * TCP_MSS,
-        bytesInFlight: 0, sendQueue: '', unacked: new Map(),
+        mss: TCP_MSS,
+        cwnd: TCP_INITIAL_CWND_SEGMENTS * TCP_MSS,
+        ssthresh: Number.MAX_SAFE_INTEGER,
+        bytesInFlight: 0, sendQueue: '', virtualBytesQueued: 0, unacked: new Map(),
+        totalBytesSent: 0, totalBytesAcked: 0, totalBytesReceived: 0,
+        retransmissions: 0, lastAckAt: null, drainNotified: false,
+        rtoTimer: null, timeoutRetries: 0,
+        pacerNextAt: 0, pacingTimer: null,
+        lastDataAck: null, duplicateAcks: 0,
+        inFastRecovery: false, recoverSeq: 0,
         srtt: null, rttvar: null, rto: TCP_INITIAL_RTO,
+        synSentAt: null, synRetransmitted: false, synAckSentAt: null,
+        delayedAckTimer: null, delayedAckSegments: 0,
+        outOfOrder: new Map(),
         closeRequested: false, finSeq: null,
         send(data) {
           if (this.state !== 'ESTABLISHED') return false;
           this.sendQueue += String(data);
+          this.drainNotified = false;
           stack._tcpFlush(this);
           return true;
+        },
+        sendBytes(byteCount) {
+          const n = Number(byteCount);
+          if (this.state !== 'ESTABLISHED' || !Number.isSafeInteger(n) || n < 0) return false;
+          this.virtualBytesQueued = Math.min(
+            Number.MAX_SAFE_INTEGER, this.virtualBytesQueued + n);
+          this.drainNotified = false;
+          stack._tcpFlush(this);
+          return true;
+        },
+        stopSending() {
+          stack._tcpStopSending(this);
         },
         close() {
           if (this.state !== 'ESTABLISHED' && this.state !== 'CLOSE_WAIT') return;
@@ -756,11 +798,17 @@
       return conn;
     }
 
-    _tcpSend(conn, flags, data) {
-      this._tcpSendRaw(conn, flags, conn.seq, conn.ack, data);
+    _tcpSend(conn, flags, data, packetCopies, ackCopies) {
+      this._tcpSendRaw(conn, flags, conn.seq, conn.ack, data, packetCopies, ackCopies);
     }
-    _tcpSendRaw(conn, flags, seq, ack, data) {
+    _tcpSendRaw(conn, flags, seq, ack, data, packetCopies, ackCopies) {
       const seg = pdu.tcp(conn.localPort, conn.remotePort, flags, seq, ack, data);
+      if (Number.isSafeInteger(packetCopies) && packetCopies > 1) {
+        seg.__netsimPackets = packetCopies;
+      }
+      if (Number.isSafeInteger(ackCopies) && ackCopies > 1) {
+        seg.__netsimAckCopies = ackCopies;
+      }
       // Simulator-only observability fields; these are not TCP header fields.
       seg.cwnd = Math.round(conn.cwnd);
       seg.bytesInFlight = conn.bytesInFlight;
@@ -771,77 +819,303 @@
     }
 
     _tcpFlush(conn) {
-      if (conn.state !== 'ESTABLISHED' || !conn.sendQueue) {
+      if (conn.state !== 'ESTABLISHED' ||
+          (!conn.sendQueue && !conn.virtualBytesQueued)) {
         this._tcpMaybeClose(conn);
         return;
       }
       let allowance = Math.max(0, Math.floor(conn.cwnd - conn.bytesInFlight));
-      while (conn.sendQueue && allowance > 0) {
-        const len = Math.min(conn.mss, allowance, conn.sendQueue.length);
+      while ((conn.sendQueue || conn.virtualBytesQueued) && allowance > 0) {
+        if (conn.pacerNextAt > this.sim.time + TCP_PACING_HORIZON_MS) {
+          this._tcpSchedulePacingWake(conn);
+          break;
+        }
+        const virtual = !conn.sendQueue;
+        const available = virtual ? conn.virtualBytesQueued : conn.sendQueue.length;
+        const maxChunk = virtual ? conn.mss * TCP_BULK_SEGMENTS : conn.mss;
+        const len = Math.min(maxChunk, allowance, available);
         if (len <= 0) break;
-        const data = conn.sendQueue.slice(0, len);
-        conn.sendQueue = conn.sendQueue.slice(len);
+        const segmentCount = virtual ? Math.ceil(len / conn.mss) : 1;
+        const data = virtual
+          ? { __netsimBytes: len, __netsimSegments: segmentCount }
+          : conn.sendQueue.slice(0, len);
+        if (virtual) conn.virtualBytesQueued -= len;
+        else conn.sendQueue = conn.sendQueue.slice(len);
         const rec = {
-          seq: conn.seq, data, len, retries: 0, timer: null,
-          sentAt: this.sim.time, retransmitted: false,
+          seq: conn.seq, data, len, segmentCount,
+          sentAt: null, retransmitted: false, sendEvent: null, sent: false,
         };
+        if (conn.lastDataAck == null) conn.lastDataAck = rec.seq;
         conn.seq += len;
         conn.bytesInFlight += len;
+        conn.totalBytesSent += len;
         conn.unacked.set(rec.seq, rec);
         this._tcpTransmitData(conn, rec);
         allowance -= len;
       }
     }
 
-    _tcpTransmitData(conn, rec) {
-      this._tcpSendRaw(conn, ['PSH', 'ACK'], rec.seq, conn.ack, rec.data);
-      rec.sentAt = this.sim.time;
-      this.sim.cancel(rec.timer);
-      rec.timer = this.sim.schedule(conn.rto, () => {
+    _tcpSchedulePacingWake(conn) {
+      if (conn.pacingTimer || conn.state !== 'ESTABLISHED') return;
+      const delay = Math.max(0.001,
+        conn.pacerNextAt - this.sim.time - TCP_PACING_HORIZON_MS);
+      conn.pacingTimer = this.sim.schedule(delay, () => {
+        conn.pacingTimer = null;
+        this._tcpFlush(conn);
+      });
+    }
+
+    _tcpPacingDelay(conn, bytes, segmentCount) {
+      const now = this.sim.time;
+      const rtt = Math.max(1, conn.srtt == null ? conn.rto : conn.srtt);
+      const cwndInterval = bytes * rtt / Math.max(conn.mss, conn.cwnd);
+      const route = this.lookupRoute(conn.remoteIp);
+      const iface = route && route.iface;
+      const port = iface && this.device.ports.find(p =>
+        p.l3iface === iface || (p.mac && p.mac === iface.mac));
+      const bandwidth = port && port.link ? port.link.bandwidthMbps : null;
+      // Include approximate Ethernet/TCP/IP overhead when respecting the
+      // first-hop serialization rate.
+      const serialization = bandwidth
+        // Leave 5% headroom.  Pacing exactly at the nominal first-hop rate
+        // lets tiny per-hop serialization differences accumulate into an
+        // artificial tail drop on long equal-speed paths.
+        ? (bytes + Math.max(1, segmentCount || 1) * 78) * 8 /
+          (bandwidth * 1000 * 0.95)
+        : 0.001;
+      const spacing = Math.max(0.001, cwndInterval, serialization);
+      const sendAt = Math.max(now, conn.pacerNextAt);
+      conn.pacerNextAt = sendAt + spacing;
+      return sendAt - now;
+    }
+
+    _tcpTransmitData(conn, rec, retransmit) {
+      const send = () => {
+        const wasScheduled = !!rec.sendEvent;
+        rec.sendEvent = null;
         if (!conn.unacked.has(rec.seq) || conn.state === 'CLOSED') return;
-        if (rec.retries++ >= TCP_MAX_RETRIES) {
+        this._tcpSendRaw(conn, ['PSH', 'ACK'], rec.seq, conn.ack, rec.data);
+        rec.sentAt = this.sim.time;
+        rec.sent = true;
+        const oldest = conn.unacked.values().next().value;
+        if (oldest === rec && !conn.rtoTimer) this._tcpArmRto(conn);
+        if (wasScheduled) this._tcpFlush(conn);
+      };
+      if (retransmit) {
+        this.sim.cancel(rec.sendEvent);
+        send();
+        return;
+      }
+      const delay = this._tcpPacingDelay(conn, rec.len, rec.segmentCount);
+      if (delay <= 1e-9) send();
+      else rec.sendEvent = this.sim.schedule(delay, send);
+    }
+
+    _tcpStopSending(conn) {
+      conn.virtualBytesQueued = 0;
+      this.sim.cancel(conn.pacingTimer);
+      conn.pacingTimer = null;
+      let rewindSeq = null;
+      for (const [seq, rec] of [...conn.unacked]) {
+        if (rec.sent) continue;
+        this.sim.cancel(rec.sendEvent);
+        conn.unacked.delete(seq);
+        conn.bytesInFlight = Math.max(0, conn.bytesInFlight - rec.len);
+        conn.totalBytesSent = Math.max(0, conn.totalBytesSent - rec.len);
+        if (rewindSeq == null || seq < rewindSeq) rewindSeq = seq;
+      }
+      if (rewindSeq != null) conn.seq = rewindSeq;
+      conn.pacerNextAt = this.sim.time;
+      this._tcpMaybeClose(conn);
+    }
+
+    _tcpUpdateRtt(conn, sample) {
+      sample = Math.max(1, Number(sample) || 1);
+      if (conn.srtt == null) {
+        conn.srtt = sample;
+        conn.rttvar = sample / 2;
+      } else {
+        conn.rttvar = 0.75 * conn.rttvar + 0.25 * Math.abs(conn.srtt - sample);
+        conn.srtt = 0.875 * conn.srtt + 0.125 * sample;
+      }
+      conn.rto = Math.min(TCP_MAX_RTO, Math.max(TCP_MIN_RTO,
+        conn.srtt + Math.max(TCP_CLOCK_GRANULARITY, 4 * conn.rttvar)));
+    }
+
+    _tcpArmRto(conn) {
+      this.sim.cancel(conn.rtoTimer);
+      conn.rtoTimer = null;
+      const oldest = conn.unacked.values().next().value;
+      if (!oldest || !oldest.sent || conn.state === 'CLOSED') return;
+      conn.rtoTimer = this.sim.schedule(conn.rto, () => {
+        conn.rtoTimer = null;
+        if (!conn.unacked.size || conn.state === 'CLOSED') return;
+        if (conn.timeoutRetries++ >= TCP_MAX_RETRIES) {
           this._tcpAbort(conn, 'connection timed out');
           return;
         }
-        conn.ssthresh = Math.max(2 * conn.mss, Math.floor(conn.cwnd / 2));
+        const oldest = conn.unacked.values().next().value;
+        conn.ssthresh = Math.max(2 * conn.mss,
+          Math.floor(Math.max(conn.bytesInFlight, conn.cwnd) / 2));
         conn.cwnd = conn.mss;
-        conn.rto = Math.min(60000, conn.rto * 2);
-        rec.retransmitted = true;
+        conn.inFastRecovery = false;
+        conn.duplicateAcks = 0;
+        conn.rto = Math.min(TCP_MAX_RTO, conn.rto * 2);
+        conn.retransmissions += oldest.segmentCount || 1;
+        oldest.retransmitted = true;
         this.sim.note('tcp', `TCP timeout ${conn.localIp}:${conn.localPort}; cwnd=${conn.cwnd}`);
-        this._tcpTransmitData(conn, rec);
+        this._tcpTransmitData(conn, oldest, true);
       });
+    }
+
+    _tcpFastRetransmit(conn) {
+      if (!conn.unacked.size || conn.inFastRecovery) return;
+      const oldest = conn.unacked.values().next().value;
+      conn.ssthresh = Math.max(2 * conn.mss,
+        Math.floor(Math.max(conn.bytesInFlight, conn.cwnd) / 2));
+      conn.cwnd = conn.ssthresh + 3 * conn.mss;
+      conn.inFastRecovery = true;
+      conn.recoverSeq = conn.seq;
+      conn.retransmissions += oldest.segmentCount || 1;
+      oldest.retransmitted = true;
+      this.sim.note('tcp', `TCP fast retransmit ${conn.localIp}:${conn.localPort}; cwnd=${Math.round(conn.cwnd)}`);
+      this.sim.cancel(conn.rtoTimer);
+      conn.rtoTimer = null;
+      this._tcpTransmitData(conn, oldest, true);
     }
 
     _tcpAckData(conn, ack) {
       let acked = 0;
+      let rttSample = null;
       for (const [seq, rec] of conn.unacked) {
         if (seq + rec.len > ack) continue;
-        this.sim.cancel(rec.timer);
         conn.unacked.delete(seq);
         conn.bytesInFlight = Math.max(0, conn.bytesInFlight - rec.len);
         acked += rec.len;
-        if (!rec.retransmitted) {
-          const sample = Math.max(1, this.sim.time - rec.sentAt);
-          if (conn.srtt == null) {
-            conn.srtt = sample;
-            conn.rttvar = sample / 2;
-          } else {
-            conn.rttvar = 0.75 * conn.rttvar + 0.25 * Math.abs(conn.srtt - sample);
-            conn.srtt = 0.875 * conn.srtt + 0.125 * sample;
-          }
-          conn.rto = Math.min(60000, Math.max(200, conn.srtt + 4 * conn.rttvar));
+        // Karn's algorithm: never derive an RTT sample from retransmitted data.
+        // Use at most one sample per cumulative ACK so a burst cannot collapse
+        // RTTVAR unrealistically fast.
+        if (!rec.retransmitted && rec.sentAt != null) {
+          rttSample = Math.max(1, this.sim.time - rec.sentAt);
         }
       }
-      if (!acked) return;
-      if (conn.cwnd < conn.ssthresh) conn.cwnd += acked;
+      if (!acked) {
+        if (conn.unacked.size && conn.lastDataAck != null && ack === conn.lastDataAck) {
+          conn.duplicateAcks++;
+          if (conn.duplicateAcks === 3) this._tcpFastRetransmit(conn);
+          else if (conn.inFastRecovery && conn.duplicateAcks > 3) {
+            conn.cwnd += conn.mss;
+            this._tcpFlush(conn);
+          }
+        }
+        return;
+      }
+      this.sim.cancel(conn.rtoTimer);
+      conn.rtoTimer = null;
+      conn.totalBytesAcked += acked;
+      conn.lastAckAt = this.sim.time;
+      conn.lastDataAck = ack;
+      conn.duplicateAcks = 0;
+      conn.timeoutRetries = 0;
+      if (rttSample != null) this._tcpUpdateRtt(conn, rttSample);
+      if (conn.inFastRecovery) {
+        if (ack >= conn.recoverSeq) {
+          conn.cwnd = conn.ssthresh;
+          conn.inFastRecovery = false;
+        } else {
+          conn.cwnd = conn.ssthresh + 3 * conn.mss;
+          const oldest = conn.unacked.values().next().value;
+          if (oldest) {
+            conn.retransmissions += oldest.segmentCount || 1;
+            oldest.retransmitted = true;
+            this._tcpTransmitData(conn, oldest, true);
+          }
+        }
+      } else if (conn.cwnd < conn.ssthresh) conn.cwnd += acked;
       else conn.cwnd += conn.mss * acked / conn.cwnd;
       this._tcpFlush(conn);
+      if (!conn.rtoTimer) this._tcpArmRto(conn);
       this._tcpMaybeClose(conn);
     }
 
+    _tcpAckReceivedData(conn, immediate, receivedSegments) {
+      const segments = Math.max(1, Number(receivedSegments) || 1);
+      if (immediate) {
+        this.sim.cancel(conn.delayedAckTimer);
+        conn.delayedAckTimer = null;
+        conn.delayedAckSegments = 0;
+        // Out-of-order aggregate data represents one duplicate ACK per
+        // physical segment. A gap-filling cumulative ACK passes 1 here.
+        this._tcpSend(conn, ['ACK'], null, segments, segments);
+        return;
+      }
+      conn.delayedAckSegments += segments;
+      // RFC 5681 recommends acknowledging at least every second full-sized
+      // segment.  A short timer covers a final odd segment without turning
+      // every bulk-transfer packet into a reverse-path ACK.
+      if (conn.delayedAckSegments >= 2) {
+        this.sim.cancel(conn.delayedAckTimer);
+        conn.delayedAckTimer = null;
+        const copies = Math.max(1, Math.ceil(conn.delayedAckSegments / 2));
+        conn.delayedAckSegments = 0;
+        this._tcpSend(conn, ['ACK'], null, copies);
+      } else if (!conn.delayedAckTimer) {
+        conn.delayedAckTimer = this.sim.schedule(TCP_DELAYED_ACK_MS, () => {
+          conn.delayedAckTimer = null;
+          if (!conn.delayedAckSegments || conn.state === 'CLOSED') return;
+          const copies = Math.max(1, Math.ceil(conn.delayedAckSegments / 2));
+          conn.delayedAckSegments = 0;
+          this._tcpSend(conn, ['ACK'], null, copies);
+        });
+      }
+    }
+
+    _tcpReceiveData(conn, seg) {
+      const data = seg.data;
+      const dataLen = NetSim.payloadLength(data);
+      const dataSegments = tcpPayloadSegments(data);
+      if (!dataLen) return;
+      if (seg.seq < conn.ack) {
+        // A retransmitted segment that was already cumulatively acknowledged.
+        this._tcpAckReceivedData(conn, true, 1);
+        return;
+      }
+      if (seg.seq > conn.ack) {
+        // Real TCP receivers retain later segments while requesting the first
+        // missing byte with duplicate cumulative ACKs.
+        if (!conn.outOfOrder.has(seg.seq)) {
+          conn.outOfOrder.set(seg.seq, { data, len: dataLen, segments: dataSegments });
+        }
+        this._tcpAckReceivedData(conn, true, dataSegments);
+        return;
+      }
+
+      const chunks = [{ data, len: dataLen, segments: dataSegments }];
+      conn.ack += dataLen;
+      for (;;) {
+        const buffered = conn.outOfOrder.get(conn.ack);
+        if (!buffered) break;
+        conn.outOfOrder.delete(conn.ack);
+        chunks.push(buffered);
+        conn.ack += buffered.len;
+      }
+      for (const chunk of chunks) {
+        conn.totalBytesReceived += chunk.len;
+        if (conn.cbs.onData) conn.cbs.onData(chunk.data, conn);
+      }
+      // Filling a gap releases a cumulative ACK immediately; ordinary
+      // in-order traffic follows the two-segment delayed-ACK policy.
+      this._tcpAckReceivedData(conn, chunks.length > 1, chunks.length > 1
+        ? 1 : chunks.reduce((n, chunk) => n + chunk.segments, 0));
+    }
+
     _tcpMaybeClose(conn) {
-      if (!conn.closeRequested || conn.sendQueue || conn.unacked.size) return;
+      if (!conn.closeRequested || conn.sendQueue || conn.virtualBytesQueued || conn.unacked.size) return;
       if (conn.state !== 'ESTABLISHED' && conn.state !== 'CLOSE_WAIT') return;
+      if (!conn.drainNotified) {
+        conn.drainNotified = true;
+        if (conn.cbs.onDrain) conn.cbs.onDrain(conn);
+      }
       const fromEstablished = conn.state === 'ESTABLISHED';
       conn.finSeq = conn.seq;
       this._tcpSend(conn, ['FIN', 'ACK'], null);
@@ -851,7 +1125,15 @@
 
     _tcpCleanup(conn) {
       this.sim.cancel(conn.synTimer);
-      for (const rec of conn.unacked.values()) this.sim.cancel(rec.timer);
+      this.sim.cancel(conn.rtoTimer);
+      this.sim.cancel(conn.delayedAckTimer);
+      this.sim.cancel(conn.pacingTimer);
+      conn.rtoTimer = null;
+      conn.delayedAckTimer = null;
+      conn.pacingTimer = null;
+      conn.delayedAckSegments = 0;
+      conn.outOfOrder.clear();
+      for (const rec of conn.unacked.values()) this.sim.cancel(rec.sendEvent);
       conn.unacked.clear();
       conn.bytesInFlight = 0;
     }
@@ -879,6 +1161,7 @@
           conn.iss = 5000 + Math.floor(Math.random() * 9000);
           conn.seq = conn.iss;
           conn.ack = seg.seq + 1;
+          conn.synAckSentAt = this.sim.time;
           conn._listener = listener;
           this._tcpSend(conn, ['SYN', 'ACK'], null);
           conn.seq++;
@@ -897,12 +1180,22 @@
         return;
       }
 
-      if (F('ACK')) this._tcpAckData(conn, seg.ack);
+      if (F('ACK')) {
+        const copies = Math.max(1, Number(seg.__netsimAckCopies) || 1);
+        for (let i = 0; i < copies; i++) this._tcpAckData(conn, seg.ack);
+      }
 
       switch (conn.state) {
         case 'SYN_SENT':
           if (F('SYN') && F('ACK')) {
             this.sim.cancel(conn.synTimer);
+            if (!conn.synRetransmitted && conn.synSentAt != null) {
+              this._tcpUpdateRtt(conn, this.sim.time - conn.synSentAt);
+            } else {
+              // RFC 6298 recommends returning to a conservative RTO after a
+              // retransmitted SYN because its RTT sample is ambiguous.
+              conn.rto = Math.max(conn.rto, 3000);
+            }
             conn.ack = seg.seq + 1;
             conn.state = 'ESTABLISHED';
             this._tcpSend(conn, ['ACK'], null);
@@ -911,25 +1204,20 @@
           break;
         case 'SYN_RCVD':
           if (F('ACK') && !F('SYN')) {
+            if (conn.synAckSentAt != null) {
+              this._tcpUpdateRtt(conn, this.sim.time - conn.synAckSentAt);
+            }
             conn.state = 'ESTABLISHED';
             if (conn._listener) conn._listener(conn);
           }
           break;
         case 'ESTABLISHED':
-          if (seg.data != null && String(seg.data).length) {
-            const data = String(seg.data);
-            if (seg.seq !== conn.ack) {
-              // Duplicate or out-of-order data: cumulative ACK asks for conn.ack.
-              this._tcpSend(conn, ['ACK'], null);
-              break;
-            }
-            conn.ack = seg.seq + data.length;
-            this._tcpSend(conn, ['ACK'], null);
-            if (conn.cbs.onData) conn.cbs.onData(data, conn);
+          if (seg.data != null && NetSim.payloadLength(seg.data)) {
+            this._tcpReceiveData(conn, seg);
           }
           if (F('FIN')) {
-            conn.ack = seg.seq + (seg.data ? String(seg.data).length : 0) + 1;
-            this._tcpSend(conn, ['ACK'], null);
+            conn.ack = seg.seq + NetSim.payloadLength(seg.data) + 1;
+            this._tcpAckReceivedData(conn, true, 1);
             conn.state = 'CLOSE_WAIT';
             if (conn.cbs.onClose) conn.cbs.onClose(conn);
             // application closes promptly in this simulator
@@ -947,14 +1235,12 @@
           }
           break;
         case 'FIN_WAIT_2':
-          if (seg.data != null && String(seg.data).length) {
-            conn.ack = seg.seq + String(seg.data).length;
-            this._tcpSend(conn, ['ACK'], null);
-            if (conn.cbs.onData) conn.cbs.onData(String(seg.data), conn);
+          if (seg.data != null && NetSim.payloadLength(seg.data)) {
+            this._tcpReceiveData(conn, seg);
           }
           if (F('FIN')) {
             conn.ack = seg.seq + 1;
-            this._tcpSend(conn, ['ACK'], null);
+            this._tcpAckReceivedData(conn, true, 1);
             conn.state = 'TIME_WAIT';
             this._tcpTimeWait(conn);
           }

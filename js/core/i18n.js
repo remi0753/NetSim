@@ -28,7 +28,7 @@
     'tb.run.pause':     { ja: '⏸ 停止', en: '⏸ Pause' },
     'tb.run.resume':    { ja: '▶ 再開', en: '▶ Resume' },
     'tb.speed':         { ja: '速度', en: 'Speed' },
-    'tb.baseLatency':   { ja: '通信latency基準', en: 'Network latency floor' },
+    'tb.baseLatency':   { ja: '全リンクlatency下限', en: 'Per-link latency floor' },
     'tb.baseLatency.t': { ja: '全リンクの実通信に適用する片方向latencyの下限。0msでリンク個別値のみ使用', en: 'Actual one-way latency floor for every link; use 0ms for per-link values only' },
     'tb.clock.t':       { ja: 'シミュレーション時刻', en: 'Simulation time' },
     'tb.search.ph':     { ja: '🔍 デバイス検索', en: '🔍 Find device' },
@@ -186,6 +186,7 @@
           <li>traceroute 10.0.2.10</li>
           <li>arp -a / ipconfig</li>
           <li>http get 10.0.2.10 (TCPハンドシェイク観察)</li>
+          <li>iperf3 -s / iperf3 -c 10.0.2.10 -n 100M</li>
           <li>udp send 10.0.2.10 5000 hello</li>
         </ul>
         <h3>スイッチ/ルータのCLI (Cisco IOS風)</h3>
@@ -216,6 +217,7 @@
           <li>traceroute 10.0.2.10</li>
           <li>arp -a / ipconfig</li>
           <li>http get 10.0.2.10 (watch the TCP handshake)</li>
+          <li>iperf3 -s / iperf3 -c 10.0.2.10 -n 100M</li>
           <li>udp send 10.0.2.10 5000 hello</li>
         </ul>
         <h3>Switch / Router CLI (Cisco IOS-style)</h3>
@@ -545,6 +547,8 @@
         '  arp -a | arp -d                   ARPテーブル表示 / クリア',
         '  http get <IP> [ポート]            HTTP GET (TCP)',
         '  http server on|off                HTTPサーバ起動/停止 (TCP:80)',
+        '  iperf3 -s [-p ポート] [--stop]    帯域テストサーバ',
+        '  iperf3 -c <IP> [-n 100M|-t 10] [-R]   大容量TCP転送',
         '  udp send <IP> <ポート> <文字列>   UDPデータグラム送信',
         '  udp listen <ポート> / unlisten    UDP待ち受け',
         '  set ip dhcp                       DHCPでIPを自動取得',
@@ -563,6 +567,8 @@
         '  arp -a | arp -d                   Show / clear the ARP table',
         '  http get <IP> [port]              HTTP GET (TCP)',
         '  http server on|off                Start/stop the HTTP server (TCP:80)',
+        '  iperf3 -s [-p port] [--stop]      Bandwidth-test server',
+        '  iperf3 -c <IP> [-n 100M|-t 10] [-R]   Bulk TCP transfer',
         '  udp send <IP> <port> <text>       Send a UDP datagram',
         '  udp listen <port> / unlisten      Listen on UDP',
         '  set ip dhcp                       Obtain an IP via DHCP',
@@ -602,6 +608,20 @@
     'host.m.connClosed': { ja: '接続が閉じられました', en: 'Connection closed' },
     'host.m.error':      { ja: 'エラー: {0}', en: 'Error: {0}' },
     'host.m.httpUsage2': { ja: '使い方: http get <IP> [ポート] / http server on|off', en: 'Usage: http get <IP> [port] / http server on|off' },
+    'host.m.iperfUsage': { ja: '使い方: iperf3 -s [-p ポート] [--stop] / iperf3 -c <IP> [-n 100M|-t 10] [-R] [-p ポート]', en: 'Usage: iperf3 -s [-p port] [--stop] / iperf3 -c <IP> [-n 100M|-t 10] [-R] [-p port]' },
+    'host.m.iperfServerStarted':{ ja: 'iperf3 サーバを起動しました (TCP:{0})', en: 'iperf3 server started (TCP:{0})' },
+    'host.m.iperfServerStopped':{ ja: 'iperf3 サーバを停止しました', en: 'iperf3 server stopped' },
+    'host.m.iperfPortBusy':{ ja: 'エラー: TCP:{0} は使用中です', en: 'Error: TCP:{0} is already in use' },
+    'host.m.iperfBadSize':{ ja: 'エラー: 転送量は1以上、最大 {0} までです', en: 'Error: transfer size must be positive and at most {0}' },
+    'host.m.iperfBadTime':{ ja: 'エラー: 実行時間は1〜60秒で指定してください', en: 'Error: duration must be from 1 to 60 seconds' },
+    'host.m.iperfConnecting':{ ja: '{0}:{1} のiperf3サーバへ接続しています...', en: 'Connecting to iperf3 server at {0}:{1}...' },
+    'host.m.iperfConnected':{ ja: '接続完了: {0}:{1} → {2}:{3}', en: 'Connected: {0}:{1} → {2}:{3}' },
+    'host.m.iperfConnection':{ ja: '[iperf3] {0} からTCP:{1}へ接続', en: '[iperf3] connection from {0} to TCP:{1}' },
+    'host.m.iperfAccepted':{ ja: '[iperf3] {0}:{1} のテストを開始 ({2})', en: '[iperf3] test from {0}:{1} started ({2})' },
+    'host.m.iperfForward':{ ja: 'クライアント→サーバ', en: 'client to server' },
+    'host.m.iperfReverse':{ ja: 'サーバ→クライアント', en: 'server to client' },
+    'host.m.iperfServerDone':{ ja: '[iperf3] {0} 完了: {1}, {2}', en: '[iperf3] {0} complete: {1}, {2}' },
+    'host.m.iperfRetransmits':{ ja: '再送回数: {0}', en: 'Retransmissions: {0}' },
     'host.m.udpSendUsage':{ ja: '使い方: udp send <IP> <ポート> <文字列>', en: 'Usage: udp send <IP> <port> <text>' },
     'host.m.noRoute':    { ja: '% 経路がありません', en: '% No route' },
     'host.m.udpListenUsage':{ ja: '使い方: udp listen <ポート>', en: 'Usage: udp listen <port>' },

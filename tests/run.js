@@ -140,6 +140,31 @@ section('L1: ハブ経由 ping');
   ok(r.lines.some(l => l.includes('Reply from 192.168.0.2')), '応答が正しい送信元');
 }
 
+section('L1/L3: ハブ上のルータNICフィルタ');
+{
+  const { sim, net } = fresh();
+  const pc = net.addDevice('pc', 0, 0);
+  const r1 = net.addDevice('router', 0, 0);
+  const r2 = net.addDevice('router', 0, 0);
+  const hub = net.addDevice('hub', 0, 0);
+  net.connect(pc, 'eth0', hub, 'Port1');
+  net.connect(r1, 'Gi0/0', hub, 'Port2');
+  net.connect(r2, 'Gi0/0', hub, 'Port3');
+  const p1 = r1.getPort('Gi0/0'), p2 = r2.getPort('Gi0/0');
+  p1.adminUp = true;
+  p2.adminUp = true;
+  let admitted1 = 0, admitted2 = 0;
+  const onFrame1 = r1.stack.onFrame.bind(r1.stack);
+  const onFrame2 = r2.stack.onFrame.bind(r2.stack);
+  r1.stack.onFrame = (...args) => { admitted1++; onFrame1(...args); };
+  r2.stack.onFrame = (...args) => { admitted2++; onFrame2(...args); };
+  pc.nic.link.transmit(pc.nic,
+    NetSim.pdu.eth(pc.nic.mac, p1.mac, 'test', { marker: 1 }));
+  sim.advance(10);
+  ok(admitted1 === 1 && admitted2 === 0,
+    'ハブが複製したunicastを宛先でないルータNICは受理しない');
+}
+
 /* ---------- L2: switch + MAC learning ---------- */
 section('L2: スイッチ・MAC学習・VLAN分離');
 {
@@ -612,6 +637,31 @@ section('OSPF: ECMP (スパイン・リーフ)');
   ok(r2.result === true, 'スパイン障害後も残路で疎通');
 }
 
+section('OSPF: 自身のLSAが冗長経路から戻る場合');
+{
+  const { sim, net } = fresh();
+  const rt = net.addDevice('router', 0, 0, 'OSPF-SELF');
+  const peer = net.addDevice('router', 0, 0, 'OSPF-PEER');
+  net.connect(rt, 'Gi0/0', peer, 'Gi0/0');
+  const port = rt.getPort('Gi0/0');
+  port.adminUp = true;
+  port.l3iface.setIp('10.30.0.1', 24);
+  const peerPort = peer.getPort('Gi0/0');
+  peerPort.adminUp = true;
+  peerPort.l3iface.setIp('10.30.0.2', 24);
+  for (const c of ['enable', 'conf t', 'router ospf 1',
+    'network 10.30.0.0 0.0.0.255 area 0', 'end']) rt.exec(c);
+  sim.advance(1000);
+  const seq = rt.ospf.seq;
+  rt.ospf.onPacket(port.l3iface, NetSim.pdu.ipv4(
+    '10.30.0.2', '224.0.0.5', 'ospf',
+    { type: 'lsu', area: 0, lsas: [{
+      routerId: rt.ospf.routerId, area: 0, seq, nets: [],
+    }] }));
+  ok(rt.ospf.seq === seq,
+    '同一sequenceの自己LSAを再生成せず、冗長トポロジのflood stormを防ぐ');
+}
+
 /* ---------- VXLAN ---------- */
 section('VXLAN: Ethernet-over-UDP/4789 overlay');
 {
@@ -1051,24 +1101,97 @@ section('TCP: congestion window / segmentation');
   net.connect(client, 'eth0', server, 'eth0');
   client.setIp('10.9.0.1', 24, null);
   server.setIp('10.9.0.2', 24, null);
-  let received = '', opened = null, initial = null;
+  let received = '', opened = null, initial = null, pureAcks = 0;
+  sim.on('frame', tx => {
+    const ip = tx.frame && tx.frame.payload;
+    const seg = ip && ip.payload;
+    if (ip && ip.proto === 'tcp' && ip.src === '10.9.0.2' && seg &&
+        seg.flags.length === 1 && seg.flags.includes('ACK') && seg.data == null) {
+      pureAcks++;
+    }
+  });
   server.stack.tcpListen(9000, conn => {
     conn.cbs.onData = data => { received += data; };
   });
   client.stack.tcpConnect('10.9.0.2', 9000, {
     onOpen: conn => {
       opened = conn;
-      conn.send('z'.repeat(5000));
+      conn.send('z'.repeat(20000));
       initial = { cwnd: conn.cwnd, inFlight: conn.bytesInFlight, queued: conn.sendQueue.length };
     },
   });
   sim.advance(30000);
-  ok(initial && initial.cwnd === 1200 && initial.inFlight === 1200 && initial.queued === 3800,
-    '初期cwnd 1 MSSだけを送信し、残りを送信待ちにする');
-  ok(received.length === 5000 && opened && opened.unacked.size === 0,
+  ok(initial && initial.cwnd === 12000 && initial.inFlight === 12000 && initial.queued === 8000,
+    'RFC 6928相当の初期cwnd 10 MSSを使い、超過分を送信待ちにする');
+  ok(received.length === 20000 && opened && opened.unacked.size === 0,
     'MSS分割したTCPストリームをACK駆動で全量配送する');
   ok(opened && opened.cwnd > 1200 && opened.srtt != null && opened.rto >= 200,
     'ACKでcwndを増加し、RTTからRTOを更新する');
+  ok(pureAcks <= 9,
+    '連続データは最大2セグメントごとのdelayed ACKで応答する');
+}
+
+section('TCP: 単発損失とout-of-order保持');
+{
+  const { sim, net } = fresh();
+  const client = net.addDevice('pc', 0, 0, 'LOSS-CLIENT');
+  const server = net.addDevice('server', 0, 0, 'LOSS-SERVER');
+  const link = net.connect(client, 'eth0', server, 'eth0');
+  client.setIp('10.35.0.1', 24, null);
+  server.setIp('10.35.0.2', 24, null);
+  const expected = 'abcdefghij'.repeat(1200);
+  let received = '', opened = null, dropped = false;
+  const transmit = link.transmit.bind(link);
+  link.transmit = (port, frame) => {
+    const ip = frame && frame.payload;
+    const seg = ip && ip.payload;
+    if (!dropped && port === client.nic && ip && ip.proto === 'tcp' &&
+        seg && NetSim.payloadLength(seg.data) === 1200) {
+      dropped = true;
+      link.droppedFrames++;
+      return;
+    }
+    transmit(port, frame);
+  };
+  server.stack.tcpListen(9003, conn => {
+    conn.cbs.onData = data => { received += data; };
+  });
+  client.stack.tcpConnect('10.35.0.2', 9003, {
+    onOpen: conn => {
+      opened = conn;
+      conn.send(expected);
+    },
+  });
+  sim.advance(30000);
+  ok(dropped && opened && opened.retransmissions >= 1 && opened.retransmissions <= 2,
+    '3 duplicate ACKでtimeoutを待たずfast retransmitし、大量再送を避ける');
+  ok(received === expected,
+    '受信側が後続セグメントを保持し、欠落補完後に順序どおり配送する');
+}
+
+section('TCP: 長いRTTでのRTO推定');
+{
+  const { sim, net } = fresh();
+  const client = net.addDevice('pc', 0, 0, 'LONG-RTT-CLIENT');
+  const server = net.addDevice('server', 0, 0, 'LONG-RTT-SERVER');
+  net.connect(client, 'eth0', server, 'eth0', { latencyMs: 1500 });
+  client.setIp('10.40.0.1', 24, null);
+  server.setIp('10.40.0.2', 24, null);
+  let opened = null, received = 0;
+  server.stack.tcpListen(9002, conn => {
+    conn.cbs.onData = data => { received += NetSim.payloadLength(data); };
+  });
+  client.stack.tcpConnect('10.40.0.2', 9002, {
+    onOpen: conn => {
+      opened = conn;
+      conn.sendBytes(24 * 1024);
+    },
+  });
+  sim.advance(120000);
+  ok(opened && opened.srtt >= 3000 && opened.retransmissions === 0,
+    'SYNのRTTからRTOを初期化し、RTT 3秒でも早すぎる再送をしない');
+  ok(received === 24 * 1024,
+    '長いRTTでも大容量TCPストリームを欠落なく配送する');
 }
 
 section('TCP: FIFO dropからのtimeout再送');
@@ -1076,23 +1199,94 @@ section('TCP: FIFO dropからのtimeout再送');
   const { sim, net } = fresh();
   const client = net.addDevice('pc', 0, 0, 'SLOW-CLIENT');
   const server = net.addDevice('server', 0, 0, 'SLOW-SERVER');
-  const bottleneck = net.connect(client, 'eth0', server, 'eth0', {
+  const router = net.addDevice('router', 0, 0, 'BOTTLENECK-RT');
+  net.connect(client, 'eth0', router, 'Gi0/0');
+  const bottleneck = net.connect(router, 'Gi0/1', server, 'eth0', {
     bandwidthMbps: 0.02, latencyMs: 10, jitterMs: 0, queueLimitPackets: 0,
   });
-  client.setIp('10.10.0.1', 24, null);
-  server.setIp('10.10.0.2', 24, null);
+  client.setIp('10.10.0.1', 24, '10.10.0.254');
+  server.setIp('10.20.0.2', 24, '10.20.0.254');
+  router.getPort('Gi0/0').adminUp = true;
+  router.getPort('Gi0/1').adminUp = true;
+  router.getPort('Gi0/0').l3iface.setIp('10.10.0.254', 24);
+  router.getPort('Gi0/1').l3iface.setIp('10.20.0.254', 24);
   let received = '', timeouts = 0;
   sim.on('note', note => { if (note.kind === 'tcp') timeouts++; });
   server.stack.tcpListen(9001, conn => {
     conn.cbs.onData = data => { received += data; };
   });
-  client.stack.tcpConnect('10.10.0.2', 9001, {
+  client.stack.tcpConnect('10.20.0.2', 9001, {
     onOpen: conn => conn.send('q'.repeat(3600)),
   });
   sim.advance(120000);
   ok(bottleneck.droppedFrames > 0 && timeouts > 0,
     '小さいFIFOのtail dropを検出しcwndを戻してtimeout再送する');
   ok(received.length === 3600, 'drop後も累積ACKと再送でTCPストリームを復元する');
+}
+
+/* ---------- iperf3 bulk TCP transfer ---------- */
+section('iperf3: 省メモリ大容量TCP転送');
+{
+  const { sim, net } = fresh();
+  const client = net.addDevice('pc', 0, 0, 'IPERF-CLIENT');
+  const server = net.addDevice('server', 0, 0, 'IPERF-SERVER');
+  const link = net.connect(client, 'eth0', server, 'eth0');
+  client.setIp('10.20.0.1', 24, null);
+  server.setIp('10.20.0.2', 24, null);
+  const clientOut = capture(client), serverOut = capture(server);
+  let virtualFrames = 0, largestStoredPayload = 0, largestVirtualBatch = 0;
+  sim.on('frame', tx => {
+    const data = tx.frame && tx.frame.payload && tx.frame.payload.payload &&
+      tx.frame.payload.payload.data;
+    if (data && data.__netsimBytes) {
+      virtualFrames++;
+      largestStoredPayload = Math.max(largestStoredPayload, JSON.stringify(data).length);
+      largestVirtualBatch = Math.max(largestVirtualBatch, data.__netsimSegments || 1);
+    }
+  });
+
+  server.exec('iperf3 -s');
+  client.exec('iperf3 -c 10.20.0.2 -n 24K');
+  sim.advance(120000);
+  ok(server.iperfServer && server.iperfServer.port === 5201,
+    'iperf3 -s がTCP:5201で待ち受ける');
+  ok(!client.busy && clientOut.some(l => l.includes('sender')) &&
+    clientOut.some(l => l.includes('24.0 KiB')),
+  'iperf3 -n 24K が指定量を送信して結果を表示する');
+  ok(serverOut.some(l => l.includes('24.0 KiB')),
+    'サーバ側も受信量とビットレートを表示する');
+  ok(virtualFrames > 0 && largestStoredPayload < 80 && largestVirtualBatch > 1,
+    '大容量データを小さいメタデータの複数segment batchとして送る');
+  const forwardTotals = link.trafficStats(1000).directions.map(d => d.totalBytes);
+  ok(forwardTotals[0] > forwardTotals[1],
+    '順方向テストはクライアント→サーバ方向の通信量が大きい');
+
+  clientOut.length = 0;
+  client.exec('iperf3 -c 10.20.0.2 -n 12K -R');
+  sim.advance(120000);
+  const reverseTotals = link.trafficStats(1000).directions.map(d => d.totalBytes);
+  ok(!client.busy && clientOut.some(l => l.includes('receiver')) &&
+    clientOut.some(l => l.includes('12.0 KiB')),
+  'iperf3 -R でサーバ→クライアントの逆方向転送が完了する');
+  ok(reverseTotals[1] - forwardTotals[1] > reverseTotals[0] - forwardTotals[0],
+    '逆方向テストはサーバ→クライアント方向の通信量が大きい');
+
+  clientOut.length = 0;
+  sim.captureTransmissions = false;
+  const beforeTimed = link.trafficStats(1000).totalBytes;
+  client.exec('iperf3 -c 10.20.0.2 -t 1');
+  sim.advance(5000);
+  const historyEntries = [...link._directions.values()]
+    .reduce((n, state) => n + state.transmissions.length, 0);
+  ok(!client.busy && clientOut.some(l => l.includes('sender')) &&
+    link.trafficStats(1000).totalBytes > beforeTimed,
+  'iperf3 -t 1 が指定したシミュレーション時間だけ継続送信する');
+  ok(historyEntries < 500,
+    '1Gbps転送のリンク履歴を10ms bucketへ集約して件数を抑える');
+
+  server.exec('iperf3 -s --stop');
+  ok(server.iperfServer === null && !server.stack.tcpListeners.has(5201),
+    'iperf3サーバを停止できる');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

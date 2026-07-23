@@ -116,6 +116,8 @@ dhcp leases
 ping / traceroute / arp -a / ipconfig
 shutdown / no shutdown                        # NIC down / up
 http get 10.0.2.5 / http server on|off
+iperf3 -s / iperf3 -c 10.0.2.5 -n 100M
+iperf3 -c 10.0.2.5 -t 10 / iperf3 -c 10.0.2.5 -n 100M -R
 udp send <ip> <port> <msg> / udp listen <port>
 lb service 80                                # LB only
 lb backend add 10.0.2.10
@@ -181,13 +183,17 @@ tests/                Node tests and browser tests
 - Port channels are static (`channel-group <n> mode on`); LACP negotiation/LACPDU is not implemented
 - STP defaults to a Rapid PVST+ equivalent (one tree per VLAN); `spanning-tree mode rstp` selects a common tree. Both converge immediately after a topology change and omit BPDU timing, listening/learning timer states, and MSTP
 - TCP uses a deliberately compact Reno-like model: MSS segmentation, a congestion window,
-  slow start / additive increase, RTT-based RTO, and timeout retransmission. It omits SACK,
-  fast retransmit/recovery, receiver-window flow control, and several production TCP edge cases
+  initial cwnd of 10 MSS, slow start / additive increase, paced transmission, delayed ACK,
+  RTT-based single retransmission timer with exponential backoff, and fast retransmit/recovery.
+  It omits SACK, receiver-window flow control, and several production TCP edge cases. To keep
+  high-rate `iperf3` runs interactive, synthetic payloads group at most 64 MSS-sized segments
+  into one simulator event while retaining equivalent wire bytes and ACK counts plus bounded
+  packet-train accounting in the FIFO; the packet log labels these entries as batches
 - NAT is "inside source" direction only (static NAT + interface overload = PAT). Dynamic NAT pools, `outside source`, and per-port static NAT are not implemented
 - IPv6 / BGP are not implemented
 - Links default to a 1 Gbps LAN with 1ms one-way latency. Each full-duplex direction has its own
   bandwidth-limited FIFO; bandwidth, latency, jitter, and queue depth can be edited per link with
   LAN/metro/WAN/mobile/satellite presets. The toolbar also provides a global actual-latency floor
-  (100ms by default): effective one-way latency is `max(link latency, global floor)`, and setting it
+  (0ms by default): effective one-way latency is `max(link latency, global floor)`, and setting it
   to 0 uses the individual link values unchanged. The speed slider goes up to 64x
 - `shutdown all` / `no shutdown all` are simulator-only convenience commands for fault injection, not IOS commands

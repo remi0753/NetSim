@@ -24,8 +24,8 @@
       <span id="speed-val">x1</span>
     </label>
     <label class="base-latency-label" data-i18n-title="tb.baseLatency.t" title="全リンクの実通信に適用する片方向latencyの下限。0msでリンク個別値のみ使用">
-      <span data-i18n="tb.baseLatency">通信latency基準</span>
-      <input id="base-latency" type="number" min="0" max="10000" step="10" value="100"> ms
+      <span data-i18n="tb.baseLatency">全リンクlatency下限</span>
+      <input id="base-latency" type="number" min="0" max="10000" step="10" value="0"> ms
     </label>
     <span id="sim-clock" data-i18n-title="tb.clock.t" title="シミュレーション時刻">0.0s</span>
   </div>
@@ -192,6 +192,7 @@
           <li>traceroute 10.0.2.10</li>
           <li>arp -a / ipconfig</li>
           <li>http get 10.0.2.10 (TCPハンドシェイク観察)</li>
+          <li>iperf3 -s / iperf3 -c 10.0.2.10 -n 100M</li>
           <li>udp send 10.0.2.10 5000 hello</li>
         </ul>
         <h3>スイッチ/ルータのCLI (Cisco IOS風)</h3>

@@ -33,6 +33,14 @@
     receiveFrame(port, frame) {
       if (!port.isUp()) return;
       if (frame.vlan != null) return;   // no subinterfaces in this model
+      const isMulticastMac = frame.dst.startsWith('01:00:5e');
+      const vrrp = port.l3iface.vrrp;
+      const isActiveVrrp = vrrp && vrrp.state === 'master' && frame.dst === vrrp.vmac;
+      // A hub repeats every bit to every attached router, but an actual router
+      // NIC only admits frames addressed to itself (plus broadcast/multicast
+      // and an active VRRP virtual MAC).
+      if (frame.dst !== port.mac && frame.dst !== NetSim.BROADCAST_MAC &&
+          !isMulticastMac && !isActiveVrrp) return;
       this.stack.onFrame(port.l3iface, frame);
     }
 

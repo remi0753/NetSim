@@ -55,8 +55,8 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   ok(boot.devices === 6 && boot.devEls === 6, `サンプル構成のデバイス描画 (${boot.devEls}/6)`);
   ok(boot.links === 5 && boot.linkEls === 5, `リンク描画 (${boot.linkEls}/5)`);
   ok(boot.palItems === 7, 'パレットに7種のデバイス (LB含む)');
-  ok(boot.baseLatency === 100 && boot.simBaseLatency === 100,
-    '通信latency基準のUI初期値は100ms');
+  ok(boot.baseLatency === 0 && boot.simBaseLatency === 0,
+    '全リンクlatency下限のUI初期値は0ms');
   const changedBaseLatency = await page.evaluate(() => {
     const input = document.getElementById('base-latency');
     input.value = '250';
@@ -263,6 +263,19 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   ok(await page.evaluate(() =>
     [...document.querySelectorAll('.pl-row')].some(r => r.textContent.includes('[SYN]'))),
     'TCP SYN がパケットログに記録');
+
+  // 9b. iperf3 bulk transfer from the host console
+  await page.evaluate(() => {
+    window.netsimApp.net.findByName('SV1').exec('iperf3 -s');
+  });
+  await page.type('.bpanel.active .term-input', 'iperf3 -c 10.0.2.10 -n 24K');
+  await page.keyboard.press('Enter');
+  await new Promise(r => setTimeout(r, 1200));
+  const iperfText = await page.evaluate(() =>
+    document.querySelector('.bpanel.active .term-out').textContent);
+  ok(iperfText.includes('24.0 KiB') && iperfText.includes('sender') &&
+    iperfText.includes('再送回数'),
+  'ブラウザUIのコンソールからiperf3大容量TCP転送');
 
   // 10. save to localStorage
   await page.click('#btn-save');

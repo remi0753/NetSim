@@ -107,6 +107,16 @@
     return (ms / 1000).toFixed(3) + 's';
   }
 
+  /* Payloads used by synthetic bulk transfers carry only their byte count.
+   * This keeps large simulated streams from allocating equally large strings. */
+  function payloadLength(data) {
+    if (data && typeof data === 'object' &&
+        Number.isSafeInteger(data.__netsimBytes) && data.__netsimBytes >= 0) {
+      return data.__netsimBytes;
+    }
+    return data == null ? 0 : String(data).length;
+  }
+
   NetSim.Emitter = Emitter;
   NetSim.nextId = nextId;
   NetSim.resetIds = resetIds;
@@ -120,4 +130,5 @@
   NetSim.clone = clone;
   NetSim.hashStr = hashStr;
   NetSim.fmtTime = fmtTime;
+  NetSim.payloadLength = payloadLength;
 })(typeof window !== 'undefined' ? window : globalThis);
