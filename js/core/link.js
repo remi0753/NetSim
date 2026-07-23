@@ -99,7 +99,12 @@
     _direction(fromPort) {
       let state = this._directions.get(fromPort.id);
       if (!state) {
-        state = { busyUntil: 0, waitingStarts: [] };
+        state = {
+          busyUntil: 0,
+          waitingStarts: [],
+          totalBytes: 0,
+          transmissions: [],
+        };
         this._directions.set(fromPort.id, state);
       }
       return state;
@@ -113,6 +118,43 @@
       const state = this._direction(fromPort);
       this._pruneQueue(state, this.sim.time);
       return state.waitingStarts.length;
+    }
+    _directionTraffic(fromPort, windowMs) {
+      const state = this._direction(fromPort);
+      const now = this.sim.time;
+      const since = now - windowMs;
+      let prune = 0;
+      while (prune < state.transmissions.length &&
+             state.transmissions[prune].tEnd <= since) prune++;
+      if (prune) state.transmissions.splice(0, prune);
+
+      let bytes = 0;
+      for (const tx of state.transmissions) {
+        const overlap = Math.max(0, Math.min(now, tx.tEnd) - Math.max(since, tx.tStart));
+        if (overlap > 0) bytes += tx.bytes * overlap / (tx.tEnd - tx.tStart);
+      }
+      const rateMbps = bytes * 8 / (windowMs * 1000);
+      return {
+        fromPort,
+        toPort: this.other(fromPort),
+        bytes,
+        totalBytes: state.totalBytes,
+        rateMbps,
+        utilizationPct: Math.min(100, rateMbps / this.bandwidthMbps * 100),
+      };
+    }
+    trafficStats(windowMs) {
+      const window = finiteInRange(windowMs, 1000, 100, 60000);
+      const directions = [
+        this._directionTraffic(this.a, window),
+        this._directionTraffic(this.b, window),
+      ];
+      return {
+        windowMs: window,
+        bandwidthMbps: this.bandwidthMbps,
+        directions,
+        totalBytes: directions[0].totalBytes + directions[1].totalBytes,
+      };
     }
     _sampleLatency() {
       const linkLatency = this.jitterMs
@@ -149,6 +191,8 @@
       const propagationMs = this._sampleLatency();
       const tArrival = tSerialized + propagationMs;
       state.busyUntil = tSerialized;
+      state.totalBytes += bytes;
+      state.transmissions.push({ tStart, tEnd: tSerialized, bytes });
 
       // Register animation metadata immediately. Canvas hides future-starting
       // entries, avoiding one simulator event per queued frame.

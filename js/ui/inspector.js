@@ -22,6 +22,31 @@
     if (m) { const n = Number(m[1]); return n >= 0 && n <= 32 ? n : null; }
     return null;
   }
+  function formatBytes(bytes) {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = Math.max(0, Number(bytes) || 0);
+    let unit = 0;
+    while (value >= 1000 && unit < units.length - 1) {
+      value /= 1000;
+      unit++;
+    }
+    const digits = unit === 0 ? 0 : (value < 10 ? 2 : (value < 100 ? 1 : 0));
+    return `${value.toFixed(digits)} ${units[unit]}`;
+  }
+  function formatRate(mbps) {
+    const value = Math.max(0, Number(mbps) || 0);
+    if (value < 0.001) return `${(value * 1000).toFixed(value < 0.0001 ? 2 : 1)} Kbps`;
+    if (value < 10) return `${value.toFixed(3)} Mbps`;
+    if (value < 100) return `${value.toFixed(2)} Mbps`;
+    return `${value.toFixed(1)} Mbps`;
+  }
+  function formatPercent(value) {
+    const pct = Math.max(0, Math.min(100, Number(value) || 0));
+    if (pct < 0.01) return '0.00%';
+    if (pct < 1) return `${pct.toFixed(2)}%`;
+    if (pct < 10) return `${pct.toFixed(1)}%`;
+    return `${pct.toFixed(0)}%`;
+  }
 
   class Inspector {
     constructor(app) {
@@ -57,6 +82,32 @@
       if (sel.group) { this._renderGroupPanel(sel.group); return; }
       if (sel.devices) { this._renderMulti(sel.devices); return; }
       this._renderDevice(sel.device);
+    }
+
+    updateLive() {
+      if (!this.sel || !this.sel.link) return;
+      const link = this.sel.link;
+      if (!this.app.net.links.includes(link)) return;
+      const stats = link.trafficStats(1000);
+      const rows = this.body.querySelectorAll('[data-link-traffic-dir]');
+      for (const row of rows) {
+        const dir = stats.directions[Number(row.dataset.linkTrafficDir)];
+        if (!dir) continue;
+        const rate = row.querySelector('.link-traffic-rate');
+        const amount = row.querySelector('.link-traffic-amount');
+        const pct = row.querySelector('.link-traffic-pct');
+        const fill = row.querySelector('.link-traffic-fill');
+        if (rate) rate.textContent = formatRate(dir.rateMbps);
+        if (amount) amount.textContent = formatBytes(dir.totalBytes);
+        if (pct) pct.textContent = formatPercent(dir.utilizationPct);
+        if (fill) {
+          fill.style.width = `${dir.utilizationPct}%`;
+          fill.classList.toggle('warn', dir.utilizationPct >= 70);
+          fill.classList.toggle('hot', dir.utilizationPct >= 90);
+        }
+      }
+      const total = this.body.querySelector('#link-traffic-total');
+      if (total) total.textContent = formatBytes(stats.totalBytes);
     }
 
     /* ---------- group panel ---------- */
@@ -201,6 +252,25 @@
             <tr><td>${esc(link.b.device.name)}</td><td>${esc(link.b.shortName)}</td><td>${statusHtml(link.b)}</td></tr>
           </table>
         </div>
+        <div class="insp-section link-traffic">
+          <div class="sec-title">${t('insp.link.traffic')}</div>
+          ${[link.a, link.b].map((from, index) => {
+            const to = link.other(from);
+            return `<div class="link-traffic-dir" data-link-traffic-dir="${index}">
+              <div class="link-traffic-head">
+                <span>${esc(from.device.name)} → ${esc(to.device.name)}</span>
+                <strong class="link-traffic-pct">0.00%</strong>
+              </div>
+              <div class="link-traffic-bar"><span class="link-traffic-fill"></span></div>
+              <div class="link-traffic-meta">
+                <span><span class="link-traffic-rate">0.00 Kbps</span> / ${esc(formatRate(link.bandwidthMbps))}</span>
+                <span>${t('insp.link.totalShort')} <span class="link-traffic-amount">0 B</span></span>
+              </div>
+            </div>`;
+          }).join('')}
+          <div class="link-traffic-total">${t('insp.link.total')}: <strong id="link-traffic-total">0 B</strong></div>
+          <div class="insp-note">${t('insp.link.trafficNote')}</div>
+        </div>
         <div class="insp-section">
           <div class="sec-title">${t('insp.link.network')}</div>
           <div class="insp-row"><label>${t('insp.link.profile')}</label><select id="link-profile">
@@ -220,6 +290,7 @@
           <div class="insp-note">${t('insp.link.drops', link.droppedFrames)}</div>
         </div>
         <button class="insp-btn danger" id="ins-del-link">${t('insp.link.del')}</button>`;
+      this.updateLive();
       const setInputs = (v) => {
         b.querySelector('#link-bw').value = v.bandwidthMbps;
         b.querySelector('#link-latency').value = v.latencyMs;

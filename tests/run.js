@@ -992,6 +992,13 @@ section('リンク: bandwidth / latency / FIFO');
   ok(link.droppedFrames === 1, 'FIFO上限を超えたフレームをtail dropする');
   ok(arrived[0].at >= 100 && arrived[1].at > arrived[0].at,
     'bandwidthの直列化遅延と伝搬latencyが反映される');
+  const traffic = link.trafficStats(1000);
+  ok(traffic.directions[0].totalBytes > 0 && traffic.directions[1].totalBytes === 0 &&
+    traffic.totalBytes === traffic.directions[0].totalBytes,
+  'ケーブルの転送量を方向別・双方向累計で記録する');
+  ok(traffic.directions[0].rateMbps > 0 && traffic.directions[0].utilizationPct > 0 &&
+    traffic.directions[0].utilizationPct <= 100,
+  '直近1秒の流量と帯域上限に対する利用率を算出する');
 
   const saved = JSON.parse(JSON.stringify(net.serialize()));
   const sim2 = new NetSim.Simulator(), net2 = new NetSim.Network(sim2);

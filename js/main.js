@@ -80,6 +80,7 @@
     last = now;
     sim.tick(dt);
     app.canvas.renderPackets();
+    app.inspector.updateLive();
     app.toolbar.updateClock();
     requestAnimationFrame(loop);
   }

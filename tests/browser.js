@@ -95,6 +95,37 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   ok(plInfo.count > 5, `パケットログに記録 (${plInfo.count}行)`);
   ok(plInfo.hasArp && plInfo.hasIcmp, 'ARP と ICMP がログに存在');
 
+  // 3a. selecting a cable shows live traffic amount and bandwidth utilization
+  const linkTraffic = await page.evaluate(() => {
+    const app = window.netsimApp;
+    app.sim.running = false;
+    const pc = app.net.findByName('PC1');
+    const link = pc.nic.link;
+    const original = link.settings();
+    link.configure({ ...original, bandwidthMbps: 0.008 });
+    link.transmit(pc.nic, window.NetSim.pdu.eth(
+      pc.nic.mac, pc.nic.other().mac || 'ff:ff:ff:ff:ff:ff', 'test',
+      { marker: 'traffic-meter', pad: 'x'.repeat(100) }));
+    app.sim.advance(50);
+    app.select({ link });
+    app.inspector.updateLive();
+    const first = document.querySelector('[data-link-traffic-dir="0"]');
+    const result = {
+      rows: document.querySelectorAll('[data-link-traffic-dir]').length,
+      text: document.querySelector('.link-traffic').textContent,
+      percentage: first.querySelector('.link-traffic-pct').textContent,
+      width: parseFloat(first.querySelector('.link-traffic-fill').style.width),
+    };
+    link.configure(original);
+    app.sim.running = true;
+    return result;
+  });
+  ok(linkTraffic.rows === 2 && linkTraffic.text.includes('ライブ通信量') &&
+    linkTraffic.text.includes('双方向の累計'),
+  'ケーブル選択で方向別の通信量を表示');
+  ok(linkTraffic.percentage !== '0.00%' && linkTraffic.width > 0,
+    '直近1秒の帯域利用率を数値とゲージで表示');
+
   // 3b. all protocol filters are available from the compact menu
   const protocolFilters = await page.evaluate(() => ({
     values: [...document.querySelectorAll('[data-protocol-filter]')].map(el => el.dataset.protocolFilter),
